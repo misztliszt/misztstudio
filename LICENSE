@@ -1,0 +1,66 @@
+MISZT STUDIO — LICENÇA DE SOFTWARE PROPRIETÁRIO
+
+Copyright (c) 2026 Miszt. Todos os direitos reservados.
+
+O software "Miszt Studio", incluindo seu código-fonte, código-objeto, executáveis,
+instaladores, interface, ícones, marcas, documentação e demais arquivos que o
+acompanham (o "Software"), é propriedade exclusiva de Miszt e é protegido pelas
+leis de direitos autorais e de propriedade intelectual, incluindo a Lei nº 9.610/98
+(Lei de Direitos Autorais) e a Lei nº 9.609/98 (Lei do Software).
+
+1. CONCESSÃO LIMITADA DE USO
+   Miszt concede a você uma licença pessoal, intransferível, não exclusiva e
+   revogável para instalar e usar o Software apenas em computadores próprios,
+   para fins pessoais ou profissionais, desde que você cumpra todos os termos
+   desta licença. Nenhum outro direito é concedido, expressa ou implicitamente.
+
+2. É PROIBIDO, sem autorização prévia e por escrito de Miszt:
+   a) copiar, reproduzir, distribuir, publicar, vender, alugar, emprestar,
+      sublicenciar, hospedar ou disponibilizar o Software, no todo ou em parte,
+      por qualquer meio, inclusive em repositórios, sites, lojas ou redes de
+      compartilhamento;
+   b) fazer engenharia reversa, descompilar, desmontar, desofuscar, decifrar ou
+      de qualquer outra forma tentar obter o código-fonte, algoritmos, formatos
+      ou estrutura interna do Software, salvo na estrita medida em que a lei
+      aplicável permita expressamente, apesar desta proibição;
+   c) modificar, adaptar, traduzir ou criar obras derivadas do Software;
+   d) remover, alterar ou ocultar avisos de direitos autorais, marcas, créditos
+      (incluindo a introdução "desenvolvido por Miszt") ou esta licença;
+   e) usar o Software para desenvolver produto concorrente ou com funções
+      substancialmente semelhantes.
+
+3. CÓDIGO-FONTE
+   O acesso ao código-fonte, quando houver (por exemplo, em repositório
+   privado), não concede qualquer direito de uso, cópia, modificação ou
+   distribuição além dos previstos nesta licença.
+
+4. COMPONENTES DE TERCEIROS
+   O Software inclui ou utiliza componentes de terceiros distribuídos sob suas
+   próprias licenças, listados em THIRD_PARTY_NOTICES.md. Esta licença não altera
+   os direitos que essas licenças concedem sobre os respectivos componentes.
+
+5. CONTEÚDO DO USUÁRIO
+   Os vídeos, áudios e projetos que você cria com o Software pertencem a você.
+   Você é o único responsável por ter os direitos necessários sobre o material
+   que importa, baixa (inclusive por links da internet), edita ou publica.
+
+6. AUSÊNCIA DE GARANTIA
+   O SOFTWARE É FORNECIDO "NO ESTADO EM QUE SE ENCONTRA", SEM GARANTIAS DE
+   QUALQUER TIPO, EXPRESSAS OU IMPLÍCITAS, INCLUSIVE DE COMERCIALIZAÇÃO,
+   ADEQUAÇÃO A UM FIM ESPECÍFICO E NÃO VIOLAÇÃO.
+
+7. LIMITAÇÃO DE RESPONSABILIDADE
+   NA MÁXIMA EXTENSÃO PERMITIDA PELA LEI, MISZT NÃO SERÁ RESPONSÁVEL POR
+   QUAISQUER DANOS DIRETOS, INDIRETOS, INCIDENTAIS, ESPECIAIS OU CONSEQUENTES,
+   INCLUINDO PERDA DE DADOS, LUCROS OU PROJETOS, DECORRENTES DO USO OU DA
+   IMPOSSIBILIDADE DE USO DO SOFTWARE.
+
+8. RESCISÃO
+   Esta licença termina automaticamente se você violar qualquer de seus termos.
+   Nesse caso, você deve deixar de usar o Software e apagar todas as cópias.
+
+9. LEI APLICÁVEL
+   Esta licença é regida pelas leis da República Federativa do Brasil.
+
+Para pedidos de licenciamento, distribuição ou parcerias, entre em contato com
+Miszt pelo perfil https://github.com/misztliszt.

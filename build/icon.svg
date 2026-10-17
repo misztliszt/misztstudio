@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2bd3c0"/>
+      <stop offset="1" stop-color="#3b7cf6"/>
+    </linearGradient>
+    <linearGradient id="fur" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#c9d0db"/>
+      <stop offset="1" stop-color="#a3acbb"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#bg)"/>
+
+  <!-- Orelhas -->
+  <path d="M118 214 L126 104 C128 84 150 78 164 92 L228 156 Z" fill="#7d8697"/>
+  <path d="M140 188 L146 122 L198 160 Z" fill="#262a34"/>
+  <path d="M394 214 L386 104 C384 84 362 78 348 92 L284 156 Z" fill="#7d8697"/>
+  <path d="M372 188 L366 122 L314 160 Z" fill="#262a34"/>
+
+  <!-- Cabeça, com tufos nas bochechas -->
+  <path d="M92 258 C92 172 166 128 256 128 C346 128 420 172 420 258 C420 306 398 336 368 356 L412 386 C350 410 306 428 256 428 C206 428 162 410 100 386 L144 356 C114 336 92 306 92 258 Z" fill="url(#fur)"/>
+
+  <!-- Faixa da testa -->
+  <path d="M256 134 C268 160 270 196 256 236 C242 196 244 160 256 134 Z" fill="#7d8697"/>
+
+  <!-- Sobrancelhas brancas -->
+  <ellipse cx="186" cy="214" rx="56" ry="26" fill="#f4f6f9"/>
+  <ellipse cx="326" cy="214" rx="56" ry="26" fill="#f4f6f9"/>
+
+  <!-- Máscara -->
+  <path d="M106 268 C124 230 180 226 222 250 C240 260 248 262 256 262 C264 262 272 260 290 250 C332 226 388 230 406 268 C416 292 394 328 352 330 C320 332 300 306 280 298 C268 294 262 293 256 293 C250 293 244 294 232 298 C212 306 192 332 160 330 C118 328 96 292 106 268 Z" fill="#1d2129"/>
+
+  <!-- Olhos -->
+  <circle cx="178" cy="280" r="23" fill="#ffffff"/>
+  <circle cx="183" cy="282" r="13" fill="#0b0c10"/>
+  <circle cx="188" cy="276" r="5" fill="#ffffff"/>
+  <circle cx="334" cy="280" r="23" fill="#ffffff"/>
+  <circle cx="329" cy="282" r="13" fill="#0b0c10"/>
+  <circle cx="334" cy="276" r="5" fill="#ffffff"/>
+
+  <!-- Focinho -->
+  <ellipse cx="256" cy="352" rx="74" ry="54" fill="#f4f6f9"/>
+  <path d="M232 318 C232 306 280 306 280 318 C280 332 266 340 256 340 C246 340 232 332 232 318 Z" fill="#1a1d24"/>
+  <ellipse cx="248" cy="316" rx="7" ry="4" fill="#4a5060"/>
+  <path d="M256 340 L256 356 M256 356 C246 370 230 370 224 360 M256 356 C266 370 282 370 288 360" stroke="#1a1d24" stroke-width="7" stroke-linecap="round" fill="none"/>
+</svg>

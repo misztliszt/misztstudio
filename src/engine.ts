@@ -1,0 +1,273 @@
+import { AudioGraph, clipGainAt } from './audio'
+import { clipLayout } from './anim'
+import { cssFilter } from './color'
+import { LutRenderer, parseCube, type Lut } from './lut'
+import { drawText } from './text'
+import type { Clip, Project } from './types'
+
+type MediaEl = HTMLVideoElement | HTMLAudioElement
+
+/** Tolerância antes de reposicionar um elemento que está tocando (s). */
+const PLAY_DRIFT = 0.25
+/** Clipes que começam em breve são pré-carregados na posição certa (s). */
+const PRELOAD = 1.5
+
+/**
+ * Mantém um <video>/<audio> por clipe sincronizado com o cursor da timeline,
+ * passa o áudio pelo mixer (AudioGraph) e compõe as trilhas de vídeo num canvas.
+ */
+export class PlaybackEngine {
+  readonly audio = new AudioGraph()
+  private canvas: HTMLCanvasElement | null = null
+  private project: Project | null = null
+  private elements = new Map<string, { el: MediaEl; src: string }>()
+  private images = new Map<string, HTMLImageElement>()
+  private luts = new Map<string, Lut | 'loading' | 'error'>()
+  private lutRenderer: LutRenderer | null = null
+  private time = 0
+  private playing = false
+
+  constructor() {
+    this.audio.init()
+  }
+
+  attach(canvas: HTMLCanvasElement | null) {
+    this.canvas = canvas
+    this.draw()
+  }
+
+  setProject(project: Project) {
+    this.project = project
+    const alive = new Set(project.clips.map((c) => c.id))
+    for (const [id, entry] of this.elements) {
+      if (!alive.has(id)) this.dropElement(id, entry.el)
+    }
+    this.audio.updateTracks(project.tracks)
+    this.sync()
+  }
+
+  update(time: number, playing: boolean) {
+    if (playing && !this.playing) this.audio.resume()
+    this.time = time
+    this.playing = playing
+    this.sync()
+  }
+
+  dispose() {
+    for (const [id, entry] of this.elements) this.dropElement(id, entry.el)
+  }
+
+  private dropElement(id: string, el: MediaEl) {
+    el.pause()
+    this.audio.release(el)
+    el.removeAttribute('src')
+    el.load()
+    this.elements.delete(id)
+  }
+
+  private element(clip: Clip): MediaEl | null {
+    const media = clip.mediaId ? this.project!.media[clip.mediaId] : undefined
+    if (!media || media.kind === 'image') return null
+    // A prévia usa o proxy quando existe; a exportação sempre usa o original.
+    const src = media.kind === 'video' && media.proxy ? media.proxy : media.url
+    let entry = this.elements.get(clip.id)
+    if (entry && entry.src !== src) {
+      this.dropElement(clip.id, entry.el)
+      entry = undefined
+    }
+    if (!entry) {
+      const el = document.createElement(media.kind === 'video' ? 'video' : 'audio')
+      el.crossOrigin = 'anonymous'
+      el.preload = 'auto'
+      if (el instanceof HTMLVideoElement) el.playsInline = true
+      el.src = src
+      el.addEventListener('seeked', () => this.draw())
+      el.addEventListener('loadeddata', () => this.draw())
+      entry = { el, src }
+      this.elements.set(clip.id, entry)
+    }
+    return entry.el
+  }
+
+  private image(mediaId: string): HTMLImageElement | null {
+    const media = this.project?.media[mediaId]
+    if (!media) return null
+    let img = this.images.get(mediaId)
+    if (!img) {
+      img = new Image()
+      img.crossOrigin = 'anonymous'
+      img.src = media.url
+      img.onload = () => this.draw()
+      this.images.set(mediaId, img)
+    }
+    return img
+  }
+
+  private lut(path: string): Lut | null {
+    const cached = this.luts.get(path)
+    if (cached === undefined) {
+      this.luts.set(path, 'loading')
+      window.api
+        .readText(path)
+        .then((text) => {
+          this.luts.set(path, parseCube(text))
+          this.draw()
+        })
+        .catch((err) => {
+          console.error('LUT', err)
+          this.luts.set(path, 'error')
+        })
+      return null
+    }
+    return typeof cached === 'object' ? cached : null
+  }
+
+  private sync() {
+    const p = this.project
+    if (!p) return
+    const t = this.time
+    const tracks = new Map(p.tracks.map((tr) => [tr.id, tr]))
+
+    for (const clip of p.clips) {
+      const track = tracks.get(clip.trackId)
+      if (!track || !clip.mediaId) continue
+      const end = clip.start + clip.duration
+      const active = t >= clip.start && t < end
+      const upcoming = !active && clip.start > t && clip.start - t < PRELOAD
+      if (!active && !upcoming && !this.elements.has(clip.id)) continue
+      const el = this.element(clip)
+      if (!el) continue
+
+      this.audio.connect(el, track.id)
+      const gain = clipGainAt(clip, Math.max(0, t - clip.start))
+      this.audio.setGain(el, gain)
+      // Sem o grafo de áudio (ainda), o volume vai direto no elemento.
+      if (!this.audio.ctx) el.volume = Math.min(1, gain * (track.muted ? 0 : track.volume))
+
+      const speed = clip.speed || 1
+      if (el.playbackRate !== speed) el.playbackRate = speed
+      if (active) {
+        const target = clip.in + (t - clip.start) * speed
+        if (this.playing) {
+          if (el.paused) {
+            el.currentTime = target
+            void el.play().catch(() => {})
+          } else if (Math.abs(el.currentTime - target) > PLAY_DRIFT) {
+            el.currentTime = target
+          }
+        } else {
+          if (!el.paused) el.pause()
+          if (Math.abs(el.currentTime - target) > 0.02) el.currentTime = target
+        }
+      } else {
+        if (!el.paused) el.pause()
+        if (upcoming && Math.abs(el.currentTime - clip.in) > 0.05) el.currentTime = clip.in
+      }
+    }
+    this.draw()
+  }
+
+  /** Opacidade/escurecimento das transições de entrada e saída no instante `local`. */
+  private transition(clip: Clip, local: number) {
+    let alpha = 1
+    let dark = 0
+    const apply = (type: string, progress: number) => {
+      const k = Math.max(0, Math.min(1, progress))
+      if (type === 'dissolve') alpha *= k
+      else if (type === 'black') dark = Math.max(dark, 1 - k)
+    }
+    const ti = clip.transitionIn
+    if (ti.type !== 'none' && ti.duration > 0 && local < ti.duration) apply(ti.type, local / ti.duration)
+    const to = clip.transitionOut
+    const rest = clip.duration - local
+    if (to.type !== 'none' && to.duration > 0 && rest < to.duration) apply(to.type, rest / to.duration)
+    return { alpha, dark }
+  }
+
+  draw() {
+    const canvas = this.canvas
+    const p = this.project
+    if (!canvas || !p) return
+    if (canvas.width !== p.width || canvas.height !== p.height) {
+      canvas.width = p.width
+      canvas.height = p.height
+    }
+    const ctx = canvas.getContext('2d')!
+    ctx.fillStyle = '#000'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    const t = this.time
+
+    // Trilhas de baixo para cima: a primeira trilha da lista fica por cima.
+    const videoTracks = p.tracks.filter((tr) => tr.kind === 'video' && !tr.hidden).reverse()
+    for (const track of videoTracks) {
+      const clip = p.clips.find((c) => c.trackId === track.id && t >= c.start && t < c.start + c.duration)
+      if (!clip) continue
+      const local = t - clip.start
+
+      if (clip.text) {
+        drawText(ctx, clip.text, canvas.width, canvas.height, local, clip.duration)
+        continue
+      }
+
+      const media = clip.mediaId ? p.media[clip.mediaId] : undefined
+      if (!media) continue
+      let source: CanvasImageSource | null = null
+      let sw = 0
+      let sh = 0
+      if (media.kind === 'image') {
+        const img = this.image(media.id)
+        if (img && img.complete && img.naturalWidth) {
+          source = img
+          sw = img.naturalWidth
+          sh = img.naturalHeight
+        }
+      } else if (media.kind === 'video') {
+        const el = this.elements.get(clip.id)?.el as HTMLVideoElement | undefined
+        if (el && el.readyState >= 2 && el.videoWidth) {
+          source = el
+          sw = el.videoWidth
+          sh = el.videoHeight
+        }
+      }
+      if (!source) continue
+
+      if (clip.color.lut) {
+        const lut = this.lut(clip.color.lut)
+        if (lut) {
+          this.lutRenderer ??= new LutRenderer()
+          const out = this.lutRenderer.apply(source as TexImageSource, sw, sh, lut)
+          if (out) source = out
+        }
+      }
+
+      // A saída da LUT pode ter outra resolução; o corte é em fração, então usamos as dimensões reais da fonte.
+      const srcW = source instanceof HTMLCanvasElement ? source.width : sw
+      const srcH = source instanceof HTMLCanvasElement ? source.height : sh
+      const g = clipLayout(clip, sw, sh, canvas.width, canvas.height, local)
+      if (g.opacity <= 0 || g.w < 1 || g.h < 1) continue
+      const { alpha, dark } = this.transition(clip, local)
+      ctx.save()
+      ctx.translate(g.cx, g.cy)
+      ctx.rotate((g.rotation * Math.PI) / 180)
+      ctx.globalAlpha = alpha * g.opacity
+      ctx.filter = cssFilter(clip.color)
+      ctx.drawImage(
+        source,
+        g.crop.left * srcW,
+        g.crop.top * srcH,
+        srcW * (1 - g.crop.left - g.crop.right),
+        srcH * (1 - g.crop.top - g.crop.bottom),
+        -g.w / 2,
+        -g.h / 2,
+        g.w,
+        g.h,
+      )
+      ctx.filter = 'none'
+      if (dark > 0) {
+        ctx.fillStyle = `rgba(0,0,0,${dark})`
+        ctx.fillRect(-g.w / 2, -g.h / 2, g.w, g.h)
+      }
+      ctx.restore()
+    }
+  }
+}

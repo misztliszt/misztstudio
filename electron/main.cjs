@@ -1,0 +1,475 @@
+const { app, BrowserWindow, ipcMain, dialog, protocol, shell } = require('electron')
+const path = require('node:path')
+const fs = require('node:fs')
+const os = require('node:os')
+const crypto = require('node:crypto')
+const { spawn, execFile } = require('node:child_process')
+const { Readable } = require('node:stream')
+const { prepareExport, buildMixdownArgs } = require('./export.cjs')
+const { StemEngine } = require('./stems.cjs')
+const { Downloader } = require('./downloader.cjs')
+
+const isDev = process.argv.includes('--dev')
+
+// ffmpeg-static/ffprobe-static ficam dentro de app.asar.unpacked quando empacotado.
+function binPath(p) {
+  return p ? p.replace('app.asar', 'app.asar.unpacked') : null
+}
+const FFMPEG = binPath(require('ffmpeg-static')) || 'ffmpeg'
+const FFPROBE = binPath(require('ffprobe-static').path) || 'ffprobe'
+
+const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif'])
+const MIME = {
+  '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm',
+  '.mkv': 'video/x-matroska', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg',
+  '.flac': 'audio/flac', '.m4a': 'audio/mp4', '.aac': 'audio/aac', '.png': 'image/png',
+  '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.bmp': 'image/bmp',
+  '.gif': 'image/gif',
+}
+
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'media', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true, corsEnabled: true } },
+  // A interface empacotada é servida por app:// (e não file://) para que workers e o AudioWorklet carreguem como módulos.
+  { scheme: 'app', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true, corsEnabled: true } },
+])
+
+const DIST = path.join(__dirname, '..', 'dist')
+const APP_MIME = {
+  '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css',
+  '.wasm': 'application/wasm', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png',
+}
+
+function handleApp(request) {
+  const rel = decodeURIComponent(new URL(request.url).pathname).replace(/^\/+/, '') || 'index.html'
+  const file = path.normalize(path.join(DIST, rel))
+  if (!file.startsWith(DIST + path.sep)) return new Response('forbidden', { status: 403 })
+  try {
+    const data = fs.readFileSync(file)
+    return new Response(data, { headers: { 'Content-Type': APP_MIME[path.extname(file).toLowerCase()] || 'application/octet-stream' } })
+  } catch {
+    return new Response('not found', { status: 404 })
+  }
+}
+
+/** Projeto passado na linha de comando (duplo clique num .edproj). */
+function projectFromArgs(argv) {
+  return argv.slice(1).find((a) => a.toLowerCase().endsWith('.edproj') && fs.existsSync(a)) || null
+}
+
+const thumbDir = path.join(os.tmpdir(), 'miszt-studio-thumbs')
+
+// Serve arquivos locais com suporte a Range, necessário para o <video> buscar posições.
+function handleMedia(request) {
+  const filePath = decodeURIComponent(new URL(request.url).pathname.slice(1))
+  let stat
+  try {
+    stat = fs.statSync(filePath)
+  } catch {
+    return new Response('not found', { status: 404 })
+  }
+  const headers = {
+    'Content-Type': MIME[path.extname(filePath).toLowerCase()] || 'application/octet-stream',
+    'Accept-Ranges': 'bytes',
+    'Access-Control-Allow-Origin': '*',
+  }
+  const range = request.headers.get('range')
+  const match = range && /bytes=(\d*)-(\d*)/.exec(range)
+  if (match) {
+    const start = match[1] ? Number(match[1]) : 0
+    const end = match[2] ? Math.min(Number(match[2]), stat.size - 1) : stat.size - 1
+    if (start >= stat.size || start > end) {
+      return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${stat.size}` } })
+    }
+    const stream = fs.createReadStream(filePath, { start, end })
+    return new Response(Readable.toWeb(stream), {
+      status: 206,
+      headers: { ...headers, 'Content-Length': String(end - start + 1), 'Content-Range': `bytes ${start}-${end}/${stat.size}` },
+    })
+  }
+  return new Response(Readable.toWeb(fs.createReadStream(filePath)), {
+    status: 200,
+    headers: { ...headers, 'Content-Length': String(stat.size) },
+  })
+}
+
+function mediaUrl(filePath) {
+  return 'media://local/' + encodeURIComponent(filePath)
+}
+
+function run(bin, args) {
+  return new Promise((resolve, reject) => {
+    execFile(bin, args, { maxBuffer: 32 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
+      if (err) reject(new Error(stderr || err.message))
+      else resolve(stdout)
+    })
+  })
+}
+
+async function probe(filePath) {
+  const ext = path.extname(filePath).toLowerCase()
+  const out = await run(FFPROBE, ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', filePath])
+  const info = JSON.parse(out)
+  const streams = info.streams || []
+  const video = streams.find((s) => s.codec_type === 'video' && !(s.disposition && s.disposition.attached_pic))
+  const audio = streams.find((s) => s.codec_type === 'audio')
+  const kind = IMAGE_EXT.has(ext) ? 'image' : video ? 'video' : audio ? 'audio' : null
+  if (!kind) throw new Error('Formato sem vídeo ou áudio reconhecível')
+  const duration = Number(info.format && info.format.duration) || 0
+
+  let thumb = null
+  if (kind === 'video' || kind === 'image') {
+    fs.mkdirSync(thumbDir, { recursive: true })
+    const thumbPath = path.join(thumbDir, crypto.createHash('sha1').update(filePath).digest('hex') + '.jpg')
+    const seek = kind === 'video' ? String(Math.min(1, duration / 2)) : '0'
+    try {
+      await run(FFMPEG, ['-y', '-ss', seek, '-i', filePath, '-frames:v', '1', '-vf', 'scale=240:-2', thumbPath])
+      thumb = mediaUrl(thumbPath)
+    } catch {
+      thumb = null
+    }
+  }
+
+  return {
+    path: filePath,
+    url: mediaUrl(filePath),
+    name: path.basename(filePath),
+    kind,
+    duration: kind === 'image' ? 0 : duration,
+    width: video ? video.width : 0,
+    height: video ? video.height : 0,
+    hasAudio: Boolean(audio),
+    thumb,
+    codec: video ? video.codec_name : undefined,
+    proxy: null,
+  }
+}
+
+const proxyDir = path.join(os.tmpdir(), 'miszt-studio-proxies')
+const proxyJobs = new Map()
+
+/** Gera (ou reaproveita) uma versão 540p leve em H.264 para a prévia. */
+function makeProxy(filePath) {
+  if (proxyJobs.has(filePath)) return proxyJobs.get(filePath)
+  fs.mkdirSync(proxyDir, { recursive: true })
+  const stat = fs.statSync(filePath)
+  const key = crypto.createHash('sha1').update(`${filePath}|${stat.size}|${stat.mtimeMs}`).digest('hex')
+  const out = path.join(proxyDir, key + '.mp4')
+  if (fs.existsSync(out)) return Promise.resolve(mediaUrl(out))
+  const job = (async () => {
+    const info = JSON.parse(await run(FFPROBE, ['-v', 'error', '-print_format', 'json', '-show_format', filePath]))
+    const total = Number(info.format && info.format.duration) || 0
+    const tmp = out + '.part.mp4'
+    await new Promise((resolve, reject) => {
+      const proc = spawn(
+        FFMPEG,
+        ['-y', '-hide_banner', '-i', filePath, '-map', '0:v:0', '-map', '0:a:0?', '-vf', 'scale=-2:540', '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '26', '-g', '15', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '128k', tmp],
+        { windowsHide: true },
+      )
+      proc.stderr.on('data', (chunk) => {
+        const m = /time=(\d+):(\d+):(\d+\.?\d*)/.exec(chunk.toString())
+        if (m && total > 0 && mainWindow) {
+          const t = Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3])
+          mainWindow.webContents.send('proxy:progress', filePath, Math.min(1, t / total))
+        }
+      })
+      proc.on('error', reject)
+      proc.on('close', (code) => (code === 0 ? resolve() : reject(new Error('Falha ao gerar proxy'))))
+    })
+    fs.renameSync(tmp, out)
+    return mediaUrl(out)
+  })()
+  proxyJobs.set(filePath, job)
+  job.catch(() => {}).finally(() => proxyJobs.delete(filePath))
+  return job
+}
+
+const autosavePath = () => path.join(app.getPath('userData'), 'autosave.edproj')
+
+// Preferências gerais (ex.: pasta de downloads).
+const settingsPath = () => path.join(app.getPath('userData'), 'settings.json')
+function readSettings() {
+  try {
+    return JSON.parse(fs.readFileSync(settingsPath(), 'utf8')) || {}
+  } catch {
+    return {}
+  }
+}
+function writeSettings(s) {
+  fs.writeFileSync(settingsPath(), JSON.stringify(s, null, 2))
+}
+
+// Projetos recentes (mais novo primeiro).
+const recentPath = () => path.join(app.getPath('userData'), 'recent.json')
+function readRecent() {
+  try {
+    const list = JSON.parse(fs.readFileSync(recentPath(), 'utf8'))
+    return Array.isArray(list) ? list : []
+  } catch {
+    return []
+  }
+}
+function writeRecent(list) {
+  fs.writeFileSync(recentPath(), JSON.stringify(list.slice(0, 12), null, 2))
+}
+function addRecent(filePath) {
+  let summary = {}
+  try {
+    const p = JSON.parse(fs.readFileSync(filePath, 'utf8'))
+    const duration = (p.clips || []).reduce((m, c) => Math.max(m, c.start + c.duration), 0)
+    summary = { width: p.width, height: p.height, duration, clips: (p.clips || []).length }
+  } catch {
+    // resumo é opcional
+  }
+  writeRecent([{ path: filePath, name: path.basename(filePath, path.extname(filePath)), openedAt: Date.now(), ...summary }, ...readRecent().filter((r) => r.path !== filePath)])
+}
+
+let mainWindow
+let exportProc = null
+let exporting = false
+let exportCanceled = false
+
+/** Roda o FFmpeg da exportação; com `total` informa o progresso à janela. */
+function runFfmpeg(args, total = 0) {
+  if (exportCanceled) return Promise.reject(new Error('Exportação cancelada'))
+  return new Promise((resolve, reject) => {
+    const proc = spawn(FFMPEG, args, { windowsHide: true })
+    exportProc = proc
+    let log = ''
+    proc.stderr.on('data', (chunk) => {
+      const text = chunk.toString()
+      log = (log + text).slice(-8000)
+      const m = /time=(\d+):(\d+):(\d+\.?\d*)/.exec(text)
+      if (m && total > 0) {
+        const t = Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3])
+        mainWindow.webContents.send('export:progress', Math.min(1, t / total))
+      }
+    })
+    proc.on('error', (err) => {
+      exportProc = null
+      reject(err)
+    })
+    proc.on('close', (code) => {
+      exportProc = null
+      if (code === 0) resolve()
+      else reject(new Error(exportCanceled || code === null ? 'Exportação cancelada' : 'FFmpeg falhou:\n' + log.slice(-2000)))
+    })
+  })
+}
+
+function createWindow() {
+  mainWindow = new BrowserWindow({
+    width: 1440,
+    height: 900,
+    minWidth: 1000,
+    minHeight: 640,
+    backgroundColor: '#0e0f13',
+    title: 'Miszt Studio',
+    autoHideMenuBar: true,
+    icon: path.join(__dirname, '..', 'build', 'icon.png'),
+    // Barra de título integrada: a toolbar do app ocupa o topo e o Windows desenha só os botões da janela.
+    titleBarStyle: 'hidden',
+    titleBarOverlay: { color: '#00000000', symbolColor: '#a9afbd', height: 44 },
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  })
+  if (isDev) mainWindow.loadURL('http://localhost:5173')
+  else mainWindow.loadURL('app://bundle/index.html')
+}
+
+app.whenReady().then(() => {
+  protocol.handle('media', handleMedia)
+  protocol.handle('app', handleApp)
+
+  ipcMain.handle('recent:list', () =>
+    readRecent().map((r) => ({ ...r, exists: fs.existsSync(r.path) })),
+  )
+  ipcMain.handle('recent:remove', (_e, filePath) => writeRecent(readRecent().filter((r) => r.path !== filePath)))
+  ipcMain.handle('project:openPath', (_e, filePath) => {
+    const json = fs.readFileSync(filePath, 'utf8')
+    addRecent(filePath)
+    return { filePath, json }
+  })
+  ipcMain.handle('shell:show', (_e, filePath) => shell.showItemInFolder(filePath))
+
+  ipcMain.handle('project:initial', () => {
+    const filePath = projectFromArgs(process.argv)
+    return filePath ? { filePath, json: fs.readFileSync(filePath, 'utf8') } : null
+  })
+
+  ipcMain.handle('media:import', async () => {
+    const res = await dialog.showOpenDialog(mainWindow, {
+      title: 'Importar mídia',
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: 'Mídia', extensions: ['mp4', 'mov', 'm4v', 'webm', 'mkv', 'mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac', 'png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif'] },
+        { name: 'Todos', extensions: ['*'] },
+      ],
+    })
+    if (res.canceled) return []
+    return probeMany(res.filePaths)
+  })
+
+  ipcMain.handle('media:probe', (_e, paths) => probeMany(paths))
+
+  ipcMain.handle('project:save', async (_e, { json, filePath }) => {
+    let target = filePath
+    if (!target) {
+      const res = await dialog.showSaveDialog(mainWindow, {
+        title: 'Salvar projeto',
+        defaultPath: 'projeto.edproj',
+        filters: [{ name: 'Projeto', extensions: ['edproj'] }],
+      })
+      if (res.canceled) return null
+      target = res.filePath
+    }
+    fs.writeFileSync(target, json, 'utf8')
+    addRecent(target)
+    return target
+  })
+
+  ipcMain.handle('project:open', async () => {
+    const res = await dialog.showOpenDialog(mainWindow, {
+      title: 'Abrir projeto',
+      properties: ['openFile'],
+      filters: [{ name: 'Projeto', extensions: ['edproj'] }],
+    })
+    if (res.canceled) return null
+    const filePath = res.filePaths[0]
+    addRecent(filePath)
+    return { filePath, json: fs.readFileSync(filePath, 'utf8') }
+  })
+
+  ipcMain.handle('export:start', async (_e, payload) => {
+    if (exporting) throw new Error('Já existe uma exportação em andamento')
+    const format = (payload.options && payload.options.format) || 'mp4'
+    const FORMAT_NAMES = { mp4: 'Vídeo MP4', mov: 'Vídeo QuickTime', webm: 'Vídeo WebM', mp3: 'Áudio MP3', wav: 'Áudio WAV' }
+    const base = ((payload.options && payload.options.fileName) || 'video').replace(/[\\/:*?"<>|]/g, '_')
+    const res = await dialog.showSaveDialog(mainWindow, {
+      title: format === 'mp3' || format === 'wav' ? 'Exportar áudio' : 'Exportar vídeo',
+      defaultPath: `${base}.${format}`,
+      filters: [{ name: FORMAT_NAMES[format] || format, extensions: [format] }],
+    })
+    if (res.canceled) return null
+    const outPath = res.filePath
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'miszt-studio-export-'))
+    exporting = true
+    exportCanceled = false
+    try {
+      const { args, total } = await prepareExport(payload, outPath, { workDir, runFfmpeg: (a) => runFfmpeg(a) })
+      await runFfmpeg(args, total)
+      return outPath
+    } finally {
+      exporting = false
+      fs.rmSync(workDir, { recursive: true, force: true })
+    }
+  })
+
+  ipcMain.handle('export:cancel', () => {
+    exportCanceled = true
+    if (exportProc) exportProc.kill()
+  })
+
+  ipcMain.handle('media:proxy', (_e, filePath) => makeProxy(filePath))
+
+  ipcMain.handle('lut:pick', async () => {
+    const res = await dialog.showOpenDialog(mainWindow, {
+      title: 'Escolher LUT',
+      properties: ['openFile'],
+      filters: [{ name: 'LUT 3D', extensions: ['cube'] }],
+    })
+    return res.canceled ? null : res.filePaths[0]
+  })
+
+  ipcMain.handle('file:readText', (_e, filePath) => {
+    if (path.extname(filePath).toLowerCase() !== '.cube') throw new Error('Somente arquivos .cube')
+    return fs.readFileSync(filePath, 'utf8')
+  })
+
+  ipcMain.handle('audio:mixdown', (_e, project, sampleRate) => {
+    const args = buildMixdownArgs(project, sampleRate)
+    return new Promise((resolve, reject) => {
+      const proc = spawn(FFMPEG, args, { windowsHide: true })
+      const chunks = []
+      let err = ''
+      proc.stdout.on('data', (c) => chunks.push(c))
+      proc.stderr.on('data', (c) => (err += c.toString()))
+      proc.on('error', reject)
+      proc.on('close', (code) => {
+        if (code !== 0) return reject(new Error('FFmpeg falhou ao mixar o áudio:\n' + err.slice(-1500)))
+        const buf = Buffer.concat(chunks)
+        resolve(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength))
+      })
+    })
+  })
+
+  ipcMain.handle('autosave:write', (_e, json) => {
+    const file = autosavePath()
+    if (json === null) fs.rmSync(file, { force: true })
+    else fs.writeFileSync(file, json, 'utf8')
+  })
+
+  const settings = readSettings()
+  const downloader = new Downloader(app.getPath('userData'), FFMPEG, settings.downloadDir || path.join(app.getPath('videos'), 'Miszt Studio'))
+  ipcMain.handle('ytdlp:pickFolder', async () => {
+    const res = await dialog.showOpenDialog(mainWindow, {
+      title: 'Escolha onde salvar os downloads',
+      defaultPath: downloader.outDir,
+      properties: ['openDirectory', 'createDirectory'],
+    })
+    if (res.canceled || !res.filePaths[0]) return downloader.outDir
+    downloader.outDir = res.filePaths[0]
+    writeSettings({ ...readSettings(), downloadDir: downloader.outDir })
+    return downloader.outDir
+  })
+  const sendDl = (msg) => mainWindow && mainWindow.webContents.send('ytdlp:progress', msg)
+  ipcMain.handle('ytdlp:status', () => downloader.status())
+  ipcMain.handle('ytdlp:install', () => downloader.install(sendDl))
+  ipcMain.handle('ytdlp:update', () => downloader.update())
+  ipcMain.handle('ytdlp:info', (_e, url) => downloader.info(url))
+  ipcMain.handle('ytdlp:cancel', () => downloader.cancel())
+  ipcMain.handle('ytdlp:download', async (_e, url, preset) => {
+    const file = await downloader.download(url, preset, sendDl)
+    return (await probeMany([file]))[0]
+  })
+
+  const stems = new StemEngine(app.getPath('userData'), FFMPEG)
+  const sendStems = (msg) => mainWindow && mainWindow.webContents.send('stems:progress', msg)
+  ipcMain.handle('stems:status', () => stems.status())
+  ipcMain.handle('stems:install', (_e, variant) => stems.install(variant, sendStems))
+  ipcMain.handle('stems:cancel', () => stems.cancel())
+  ipcMain.handle('stems:separate', async (_e, req) => {
+    const result = await stems.separate(req, sendStems)
+    const probed = await probeMany(result.map((s) => s.path))
+    return result.map((s, i) => ({ name: s.name, probe: probed[i] }))
+  })
+
+  ipcMain.handle('autosave:read', () => {
+    const file = autosavePath()
+    if (!fs.existsSync(file)) return null
+    return { json: fs.readFileSync(file, 'utf8'), savedAt: fs.statSync(file).mtimeMs }
+  })
+
+  createWindow()
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+  })
+})
+
+async function probeMany(paths) {
+  const results = []
+  for (const p of paths) {
+    try {
+      results.push({ ok: true, media: await probe(p) })
+    } catch (err) {
+      results.push({ ok: false, path: p, error: String(err.message || err) })
+    }
+  }
+  return results
+}
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit()
+})
