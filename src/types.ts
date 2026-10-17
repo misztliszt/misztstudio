@@ -164,6 +164,8 @@ export interface Project {
   clips: Clip[]
   /** Marcadores na régua da timeline. */
   markers?: Marker[]
+  /** Timeline magnética: a trilha principal (vídeo mais embaixo) não deixa buracos. */
+  magnetic?: boolean
 }
 
 export interface Marker {
@@ -259,6 +261,8 @@ declare global {
       cancelExport(): Promise<void>
       onExportProgress(cb: (value: number) => void): () => void
       makeProxy(path: string): Promise<string>
+      extractFrame(path: string, time: number): Promise<ProbeResult>
+      reverseMedia(path: string, inPoint: number, duration: number, hasAudio: boolean): Promise<ProbeResult>
       onProxyProgress(cb: (path: string, value: number) => void): () => void
       pickLut(): Promise<string | null>
       readText(path: string): Promise<string>

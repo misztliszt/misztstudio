@@ -374,6 +374,45 @@ app.whenReady().then(() => {
 
   ipcMain.handle('media:proxy', (_e, filePath) => makeProxy(filePath))
 
+  /** Quadro parado (PNG) da mídia no instante `time` da fonte. */
+  ipcMain.handle('media:frame', async (_e, filePath, time) => {
+    const dir = path.join(app.getPath('userData'), 'frames')
+    fs.mkdirSync(dir, { recursive: true })
+    const out = path.join(dir, `${crypto.createHash('sha1').update(`${filePath}|${time.toFixed(3)}`).digest('hex').slice(0, 16)}.png`)
+    if (!fs.existsSync(out)) await run(FFMPEG, ['-y', '-hide_banner', '-loglevel', 'error', '-ss', time.toFixed(3), '-i', filePath, '-frames:v', '1', out])
+    return (await probeMany([out]))[0]
+  })
+
+  /**
+   * Versão invertida do trecho [inPoint, inPoint+duration]. Inverte em blocos de 4 s
+   * (o filtro reverse guarda o bloco inteiro na memória) e junta os blocos em ordem inversa.
+   */
+  ipcMain.handle('media:reverse', async (_e, filePath, inPoint, duration, hasAudio) => {
+    const key = crypto.createHash('sha1').update(`${filePath}|${inPoint.toFixed(3)}|${duration.toFixed(3)}`).digest('hex').slice(0, 16)
+    const dir = path.join(app.getPath('userData'), 'reversed')
+    const out = path.join(dir, `${key}.mp4`)
+    if (!fs.existsSync(out)) {
+      const work = path.join(dir, key)
+      fs.mkdirSync(work, { recursive: true })
+      const CHUNK = 4
+      const count = Math.max(1, Math.ceil(duration / CHUNK))
+      const parts = []
+      for (let i = 0; i < count; i++) {
+        const start = inPoint + i * CHUNK
+        const len = Math.min(CHUNK, inPoint + duration - start)
+        const part = path.join(work, `p${String(i).padStart(4, '0')}.mp4`)
+        const audio = hasAudio ? ['-af', 'areverse', '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2'] : ['-an']
+        await run(FFMPEG, ['-y', '-hide_banner', '-loglevel', 'error', '-ss', start.toFixed(3), '-t', len.toFixed(3), '-i', filePath, '-vf', 'reverse', ...audio, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '17', '-pix_fmt', 'yuv420p', part])
+        parts.push(part)
+      }
+      const list = path.join(work, 'list.txt')
+      fs.writeFileSync(list, parts.reverse().map((p) => `file '${p.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`).join('\n'))
+      await run(FFMPEG, ['-y', '-hide_banner', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', '-movflags', '+faststart', out])
+      fs.rmSync(work, { recursive: true, force: true })
+    }
+    return (await probeMany([out]))[0]
+  })
+
   ipcMain.handle('lut:pick', async () => {
     const res = await dialog.showOpenDialog(mainWindow, {
       title: 'Escolher LUT',

@@ -179,6 +179,11 @@ export type Action =
   | { type: 'removeMarker'; id: string }
   | { type: 'insertClips'; clips: Clip[] }
   | { type: 'removeClips'; ids: string[] }
+  | { type: 'rippleDelete'; ids: string[] }
+  | { type: 'setMagnetic'; on: boolean }
+  | { type: 'freezeFrame'; clipId: string; at: number; media: Media; duration: number }
+  | { type: 'replaceClipMedia'; clipId: string; media: Media; patch?: Partial<Clip> }
+  | { type: 'speedRamp'; clipId: string; factors: number[] }
   | { type: 'split'; time: number; ids: string[] }
   | { type: 'addTrack'; kind: TrackKind }
   | { type: 'updateTrack'; id: string; patch: Partial<Track> }
@@ -207,7 +212,44 @@ function nextTrack(p: Project, kind: TrackKind): Track {
   return makeTrack(kind, `${kind === 'video' ? 'Vídeo' : 'Áudio'} ${count}`)
 }
 
+/** Rampas de velocidade prontas: multiplicadores da velocidade atual em partes iguais da mídia. */
+export const SPEED_RAMPS: { name: string; factors: number[] }[] = [
+  { name: 'Montagem', factors: [2, 2, 1.6, 0.6, 0.3, 0.3, 0.6, 1.6, 2, 2] },
+  { name: 'Herói', factors: [1, 1, 0.5, 0.25, 0.25, 0.25, 0.5, 1, 1, 1] },
+  { name: 'Bullet time', factors: [2, 2, 2, 0.3, 0.2, 0.2, 0.3, 2, 2, 2] },
+  { name: 'Acelerar', factors: [0.5, 0.6, 0.75, 0.9, 1.1, 1.3, 1.6, 2, 2.5, 3] },
+  { name: 'Desacelerar', factors: [3, 2.5, 2, 1.6, 1.3, 1.1, 0.9, 0.75, 0.6, 0.5] },
+]
+
+/** Trilha principal: a de vídeo mais embaixo (base da composição). */
+export function mainTrackId(p: Project) {
+  const videos = p.tracks.filter((t) => t.kind === 'video')
+  return videos[videos.length - 1]?.id ?? null
+}
+
+/** Timeline magnética: na trilha principal os clipes ficam colados, a partir do zero, na ordem de início. */
+function compactMain(p: Project): Project {
+  const id = mainTrackId(p)
+  if (!id) return p
+  const main = p.clips.filter((c) => c.trackId === id).sort((a, b) => a.start - b.start)
+  let t = 0
+  let changed = false
+  const starts = new Map<string, number>()
+  for (const c of main) {
+    if (Math.abs(c.start - t) > 1e-6) changed = true
+    starts.set(c.id, t)
+    t += c.duration
+  }
+  if (!changed) return p
+  return { ...p, clips: p.clips.map((c) => (starts.has(c.id) ? { ...c, start: starts.get(c.id)! } : c)) }
+}
+
 export function reduce(p: Project, a: Action): Project {
+  const next = reduceCore(p, a)
+  return next.magnetic && next !== p ? compactMain(next) : next
+}
+
+function reduceCore(p: Project, a: Action): Project {
   switch (a.type) {
     case 'load':
       return normalizeProject(a.project)
@@ -307,8 +349,88 @@ export function reduce(p: Project, a: Action): Project {
       const updated = { ...clip, ...a.patch }
       updated.start = Math.max(0, updated.start)
       updated.duration = Math.max(MIN_CLIP, updated.duration)
-      if (overlaps(p, updated.trackId, updated.start, updated.duration, clip.id)) return p
+      // Na trilha principal magnética a sobreposição é resolvida pela compactação (reordena).
+      const magneticMain = p.magnetic && updated.trackId === mainTrackId(p)
+      if (!magneticMain && overlaps(p, updated.trackId, updated.start, updated.duration, clip.id)) return p
       return { ...p, clips: p.clips.map((c) => (c.id === a.id ? updated : c)) }
+    }
+    case 'rippleDelete': {
+      // Remove e puxa para a esquerda o que vem depois, na mesma trilha, fechando os buracos.
+      const removed = p.clips.filter((c) => a.ids.includes(c.id))
+      if (!removed.length) return p
+      const clips = p.clips
+        .filter((c) => !a.ids.includes(c.id))
+        .map((c) => {
+          const shift = removed.filter((r) => r.trackId === c.trackId && r.start + r.duration <= c.start + 1e-6).reduce((s, r) => s + r.duration, 0)
+          return shift ? { ...c, start: Math.max(0, c.start - shift) } : c
+        })
+      return { ...p, clips }
+    }
+    case 'setMagnetic':
+      return { ...p, magnetic: a.on }
+    case 'freezeFrame': {
+      // Divide o clipe no cursor e insere uma imagem parada, empurrando o resto da trilha.
+      const clip = p.clips.find((c) => c.id === a.clipId)
+      if (!clip) return p
+      let next = reduce(p, { type: 'split', time: a.at, ids: [clip.id] })
+      const media = { ...next.media, [a.media.id]: a.media }
+      const shifted = next.clips.map((c) => (c.trackId === clip.trackId && c.start >= a.at - 1e-6 ? { ...c, start: c.start + a.duration } : c))
+      const freeze: Clip = {
+        ...clipDefaults(),
+        id: uid(),
+        mediaId: a.media.id,
+        trackId: clip.trackId,
+        start: a.at,
+        in: 0,
+        duration: a.duration,
+        transform: { ...clip.transform, crop: { ...clip.transform.crop } },
+        color: { ...clip.color },
+      }
+      next = { ...next, media, clips: [...shifted, freeze] }
+      return next
+    }
+    case 'replaceClipMedia': {
+      // Troca a mídia do clipe (ex.: versão invertida ou com ruído removido), mantendo posição e efeitos.
+      const clip = p.clips.find((c) => c.id === a.clipId)
+      if (!clip) return p
+      return {
+        ...p,
+        media: { ...p.media, [a.media.id]: a.media },
+        clips: p.clips.map((c) => (c.id === clip.id ? { ...c, mediaId: a.media.id, in: 0, ...a.patch } : c)),
+      }
+    }
+    case 'speedRamp': {
+      // Rampa de velocidade: divide o trecho em partes iguais da mídia, cada uma com uma velocidade.
+      const clip = p.clips.find((c) => c.id === a.clipId)
+      if (!clip) return p
+      const base = clip.speed || 1
+      const src = clip.duration * base
+      const seg = src / a.factors.length
+      let t = clip.start
+      const parts: Clip[] = a.factors.map((f, i) => {
+        const speed = Math.min(4, Math.max(0.25, base * f))
+        const part: Clip = {
+          ...clip,
+          id: i === 0 ? clip.id : uid(),
+          start: t,
+          in: clip.in + i * seg,
+          duration: seg / speed,
+          speed,
+          keyframes: {},
+          volumeKeys: [],
+          fadeIn: i === 0 ? clip.fadeIn : 0,
+          fadeOut: i === a.factors.length - 1 ? clip.fadeOut : 0,
+          transitionIn: i === 0 ? clip.transitionIn : { ...clip.transitionIn, type: 'none' },
+          transitionOut: i === a.factors.length - 1 ? clip.transitionOut : { ...clip.transitionOut, type: 'none' },
+        }
+        t += part.duration
+        return part
+      })
+      const delta = t - (clip.start + clip.duration)
+      const rest = p.clips
+        .filter((c) => c.id !== clip.id)
+        .map((c) => (c.trackId === clip.trackId && c.start >= clip.start + clip.duration - 1e-6 ? { ...c, start: Math.max(0, c.start + delta) } : c))
+      return { ...p, clips: [...rest, ...parts] }
     }
     case 'toggleMarker': {
       // Um marcador no instante (±0,05 s) é removido; senão, cria um novo.

@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef } from 'react'
-import { AudioLines, Eye, EyeOff, Film, Plus, Volume2, VolumeX, X, ZoomIn, ZoomOut } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { AudioLines, Eye, EyeOff, Film, Magnet, Plus, Volume2, VolumeX, X, ZoomIn, ZoomOut } from 'lucide-react'
 import type { Action } from '../store'
-import { maxClipDuration, projectDuration } from '../store'
+import { mainTrackId, maxClipDuration, projectDuration } from '../store'
 import { keyTimes } from '../anim'
 import { useClockTime } from '../clock'
 import { beatTimes } from '../beats'
@@ -33,6 +33,45 @@ interface Props {
 
 export function Timeline({ project, time, zoom, selection, selectedTrack, onSelectTrack, playing, dispatch, checkpoint, onSeek, onSelect, onZoom, onContextMenu }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null)
+  const innerRef = useRef<HTMLDivElement>(null)
+  const [marquee, setMarquee] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
+  const mainId = mainTrackId(project)
+
+  /** Seleção com retângulo a partir de um espaço vazio da trilha (Shift soma à seleção). */
+  const startMarquee = (e: React.PointerEvent) => {
+    const inner = innerRef.current
+    if (!inner) return
+    const base = selection
+    const additive = e.shiftKey
+    const origin = { x: e.clientX, y: e.clientY }
+    let moved = false
+    const target = e.currentTarget as HTMLElement
+    target.setPointerCapture(e.pointerId)
+    const onMove = (ev: PointerEvent) => {
+      if (!moved && Math.hypot(ev.clientX - origin.x, ev.clientY - origin.y) < 4) return
+      moved = true
+      const r = inner.getBoundingClientRect()
+      const left = Math.min(origin.x, ev.clientX)
+      const top = Math.min(origin.y, ev.clientY)
+      const right = Math.max(origin.x, ev.clientX)
+      const bottom = Math.max(origin.y, ev.clientY)
+      setMarquee({ x: left - r.left, y: top - r.top, w: right - left, h: bottom - top })
+      const hit: string[] = []
+      inner.querySelectorAll<HTMLElement>('[data-clip]').forEach((el) => {
+        const b = el.getBoundingClientRect()
+        if (b.right >= left && b.left <= right && b.bottom >= top && b.top <= bottom) hit.push(el.dataset.clip!)
+      })
+      onSelect(additive ? [...new Set([...base, ...hit])] : hit)
+    }
+    const onUp = () => {
+      target.removeEventListener('pointermove', onMove)
+      target.removeEventListener('pointerup', onUp)
+      setMarquee(null)
+      if (!moved && !additive) onSelect([])
+    }
+    target.addEventListener('pointermove', onMove)
+    target.addEventListener('pointerup', onUp)
+  }
   const duration = projectDuration(project)
   const contentWidth = Math.max(duration + 30, 60) * zoom
 
@@ -167,10 +206,20 @@ export function Timeline({ project, time, zoom, selection, selectedTrack, onSele
 
   return (
     <div className="timeline" ref={scrollRef}>
-      <div className="tl-inner" style={{ width: HEADER + contentWidth }}>
+      <div className="tl-inner" ref={innerRef} style={{ width: HEADER + contentWidth }}>
+        {marquee && <div className="marquee" style={{ left: marquee.x, top: marquee.y, width: marquee.w, height: marquee.h }} />}
         <div className="tl-row tl-ruler-row">
           <div className="tl-head tl-corner">
             <LiveTimecode />
+            <button
+              className={`icon-btn magnet ${project.magnetic ? 'on' : ''}`}
+              onClick={() => dispatch({ type: 'setMagnetic', on: !project.magnetic })}
+              data-tip={project.magnetic ? 'Timeline magnética ligada: a trilha principal não deixa buracos' : 'Ligar timeline magnética'}
+              data-tip-pos="right"
+              aria-label="Timeline magnética"
+            >
+              <Magnet size={13} />
+            </button>
             <div className="zoom-control" data-tip="Zoom · Ctrl + roda" data-tip-pos="right">
               <button className="icon-btn" onClick={() => onZoom(Math.max(2, zoom / 1.4))} aria-label="Diminuir zoom">
                 <ZoomOut size={13} />
@@ -226,6 +275,11 @@ export function Timeline({ project, time, zoom, selection, selectedTrack, onSele
                 >
                   <span className="ellipsis">{track.name}</span>
                   {hasFx(track) && <span className="fx-dot">FX</span>}
+                  {project.magnetic && track.id === mainId && (
+                    <span className="main-dot" data-tip="Trilha principal (magnética)" data-tip-pos="right">
+                      <Magnet size={9} />
+                    </span>
+                  )}
                 </button>
                 {(track.kind === 'video' ? videoCount : audioCount) > 1 && (
                   <button className="icon-btn track-remove" data-tip="Remover trilha" data-tip-pos="right" onClick={() => dispatch({ type: 'removeTrack', id: track.id })}>
@@ -271,7 +325,7 @@ export function Timeline({ project, time, zoom, selection, selectedTrack, onSele
               data-track={track.id}
               data-kind={track.kind}
               onPointerDown={(e) => {
-                if (e.button === 0) onSelect([])
+                if (e.button === 0) startMarquee(e)
               }}
               onContextMenu={(e) => {
                 const r = e.currentTarget.getBoundingClientRect()
@@ -359,6 +413,7 @@ function ClipView({
   return (
     <div
       className={`clip clip-${kind} ${selected ? 'selected' : ''}`}
+      data-clip={clip.id}
       style={{ left: clip.start * zoom, width }}
       onPointerDown={(e) => onPointerDown(e, clip)}
       onContextMenu={(e) => onContextMenu(e, clip)}

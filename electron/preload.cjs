@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld('api', {
   cancelExport: () => ipcRenderer.invoke('export:cancel'),
   onExportProgress: (cb) => subscribe('export:progress', cb),
   makeProxy: (path) => ipcRenderer.invoke('media:proxy', path),
+  extractFrame: (path, time) => ipcRenderer.invoke('media:frame', path, time),
+  reverseMedia: (path, inPoint, duration, hasAudio) => ipcRenderer.invoke('media:reverse', path, inPoint, duration, hasAudio),
   onProxyProgress: (cb) => subscribe('proxy:progress', cb),
   pickLut: () => ipcRenderer.invoke('lut:pick'),
   readText: (path) => ipcRenderer.invoke('file:readText', path),

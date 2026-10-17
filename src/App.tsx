@@ -26,6 +26,10 @@ import {
   Zap,
   Drum,
   Flag,
+  TrendingUp,
+  Snowflake,
+  Rewind,
+  BetweenHorizontalStart,
 } from 'lucide-react'
 import type { Clip } from './types'
 import { defaultTransform } from './anim'
@@ -38,7 +42,7 @@ import { getPeaks } from './waveform'
 import type { ExportOptions } from './types'
 import { ContextMenu, type MenuItem, type MenuState } from './ui/ContextMenu'
 import { PlaybackEngine } from './engine'
-import { projectDuration, uid, useProject, type Template } from './store'
+import { projectDuration, SPEED_RAMPS, uid, useProject, type Template } from './store'
 import type { ExportPayload, Media, ProbeResult, Project } from './types'
 import { colorMatrix } from './color'
 import { renderTextPng } from './text'
@@ -261,6 +265,54 @@ export function App() {
     [copySelection, selection, dispatch],
   )
 
+  // ---------- Edição rápida ----------
+  const rippleDelete = useCallback(
+    (ids = selection) => {
+      if (!ids.length) return
+      dispatch({ type: 'rippleDelete', ids })
+      setSelection([])
+    },
+    [selection, dispatch],
+  )
+
+  const freezeFrame = useCallback(
+    async (clip: Clip) => {
+      const media = clip.mediaId ? project.media[clip.mediaId] : undefined
+      if (!media || media.kind !== 'video') return
+      const at = time > clip.start && time < clip.start + clip.duration ? time : clip.start
+      const src = clip.in + (at - clip.start) * (clip.speed || 1)
+      const r = await window.api.extractFrame(media.path, src)
+      if (!r.ok) {
+        toast.error('Não foi possível congelar o quadro', { detail: r.error })
+        return
+      }
+      dispatch({ type: 'freezeFrame', clipId: clip.id, at, media: { ...r.media, id: uid(), name: `Quadro de ${media.name}` }, duration: 2 })
+      toast.success('Quadro congelado', { detail: '2 s de imagem parada inseridos no cursor.' })
+    },
+    [project.media, time, dispatch, toast],
+  )
+
+  const [reversing, setReversing] = useState<string | null>(null)
+  const reverseClip = useCallback(
+    async (clip: Clip) => {
+      const media = clip.mediaId ? project.media[clip.mediaId] : undefined
+      if (!media || media.kind !== 'video' || reversing) return
+      setReversing(clip.id)
+      toast.info('Invertendo o clipe…', { detail: 'Pode levar alguns segundos em clipes longos.', duration: 3000 })
+      try {
+        const r = await window.api.reverseMedia(media.path, clip.in, clip.duration * (clip.speed || 1), media.hasAudio)
+        if (!r.ok) throw new Error(r.error)
+        dispatch({ type: 'replaceClipMedia', clipId: clip.id, media: { ...r.media, id: uid(), name: `${media.name} (reverso)` } })
+        toast.success('Clipe invertido')
+      } catch (err) {
+        toast.error('Não foi possível inverter', { detail: errorText(err) })
+      } finally {
+        setReversing(null)
+      }
+    },
+    [project.media, reversing, dispatch, toast],
+  )
+
   // ---------- Batidas ----------
   const detectBeatsFor = useCallback(
     async (mediaId: string) => {
@@ -308,6 +360,11 @@ export function App() {
         icon: Gauge,
         submenu: [0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4].map((s) => ({ label: `${s}×`, checked: Math.abs((clip.speed || 1) - s) < 1e-3, onClick: () => dispatch({ type: 'setSpeed', id: clip.id, speed: s }) })),
       })
+      items.push({ label: 'Rampa de velocidade', icon: TrendingUp, submenu: SPEED_RAMPS.map((r) => ({ label: r.name, onClick: () => dispatch({ type: 'speedRamp', clipId: clip.id, factors: r.factors }) })) })
+    }
+    if (media?.kind === 'video') {
+      items.push({ label: 'Congelar quadro no cursor', icon: Snowflake, onClick: () => void freezeFrame(clip) })
+      items.push({ label: 'Inverter (reverso)', icon: Rewind, disabled: !!reversing, onClick: () => void reverseClip(clip) })
     }
     if (media?.kind === 'video' && media.hasAudio && !clip.audioDetached) items.push({ label: 'Separar áudio do vídeo', icon: Split, onClick: () => dispatch({ type: 'detachAudio', clipId: clip.id }) })
     if (audible) items.push({ label: 'Separar voz e instrumentos…', icon: Sparkles, onClick: () => setStemsClip(clip.id) })
@@ -316,7 +373,11 @@ export function App() {
       items.push({ separator: true })
       items.push({ label: 'Restaurar transformação', icon: RotateCcw, onClick: () => dispatch({ type: 'updateClip', id: clip.id, patch: { transform: defaultTransform(), keyframes: {} } }) })
     }
-    items.push({ separator: true }, { label: ids.length > 1 ? `Excluir ${ids.length} clipes` : 'Excluir', icon: Trash2, shortcut: 'Del', danger: true, onClick: () => dispatch({ type: 'removeClips', ids }) })
+    items.push(
+      { separator: true },
+      { label: 'Excluir e fechar o buraco', icon: BetweenHorizontalStart, shortcut: 'Shift+Del', danger: true, onClick: () => rippleDelete(ids) },
+      { label: ids.length > 1 ? `Excluir ${ids.length} clipes` : 'Excluir', icon: Trash2, shortcut: 'Del', danger: true, onClick: () => dispatch({ type: 'removeClips', ids }) },
+    )
     setMenu({ x: e.clientX, y: e.clientY, items })
   }
 
@@ -546,6 +607,7 @@ export function App() {
       else if (e.code === 'Space') togglePlay()
       else if (key === 's') split()
       else if (key === 't') addText()
+      else if ((key === 'delete' || key === 'backspace') && e.shiftKey) rippleDelete()
       else if (key === 'delete' || key === 'backspace') removeSelected()
       else if (key === 'm') dispatch({ type: 'toggleMarker', t: time })
       else if (key === 'k') {

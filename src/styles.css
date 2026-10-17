@@ -3266,3 +3266,32 @@ button.track-name:hover {
 .folder-chip:hover:not(:disabled) {
   border-color: var(--line-strong);
 }
+
+/* ---------- Edição rápida ---------- */
+.marquee {
+  position: absolute;
+  z-index: 6;
+  border: 1px solid var(--accent);
+  background: rgba(43, 211, 192, 0.1);
+  border-radius: 3px;
+  pointer-events: none;
+}
+.icon-btn.magnet.on {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.main-dot {
+  display: inline-grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  flex: none;
+}
+.speed-ramps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}

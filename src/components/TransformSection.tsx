@@ -1,6 +1,6 @@
 import { ChevronLeft, ChevronRight, Diamond, Gauge, Move, RotateCcw, Scaling, Crop } from 'lucide-react'
 import { keyAt, removeKey, setPropPatch, upsertKey, valueAt } from '../anim'
-import type { Action } from '../store'
+import { SPEED_RAMPS, type Action } from '../store'
 import type { AnimProp, Clip, Ease } from '../types'
 import { defaultTransform } from '../anim'
 import { Section, Select, Slider } from './controls'
@@ -166,6 +166,16 @@ export function SpeedSection({ clip, dispatch, checkpoint }: Pick<Props, 'clip' 
         onChange={(v) => dispatch({ type: 'setSpeed', id: clip.id, speed: v }, true)}
         onReset={() => dispatch({ type: 'setSpeed', id: clip.id, speed: 1 })}
       />
+      <div className="field column">
+        <label>Rampa de velocidade</label>
+        <div className="speed-ramps">
+          {SPEED_RAMPS.map((r) => (
+            <button key={r.name} className="chip" onClick={() => dispatch({ type: 'speedRamp', clipId: clip.id, factors: r.factors })} data-tip="Divide o clipe em trechos com velocidades diferentes" data-tip-pos="top">
+              {r.name}
+            </button>
+          ))}
+        </div>
+      </div>
       <p className="hint">
         <Scaling size={11} style={{ verticalAlign: -1 }} /> A duração na timeline muda junto; o tom da voz é preservado.
       </p>
