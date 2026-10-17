@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { CAPTION_LANGUAGES, CAPTION_MODELS, toCaptionItems, transcribe, type CaptionItem } from '../captions'
+import { CAPTION_LANGUAGES, CAPTION_MODELS, toCaptionItems, transcribe, wordsToCaptionItems, type CaptionItem } from '../captions'
 import { TEXT_PRESETS } from '../text'
 import type { Project, TextStyle } from '../types'
 
@@ -7,6 +7,7 @@ export function CaptionsDialog({ project, total, onDone, onClose }: { project: P
   const [model, setModel] = useState(CAPTION_MODELS[0].id)
   const [language, setLanguage] = useState('portuguese')
   const [preset, setPreset] = useState('Legenda')
+  const [karaoke, setKaraoke] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [download, setDownload] = useState<Record<string, number>>({})
   const [error, setError] = useState<string | null>(null)
@@ -16,13 +17,20 @@ export function CaptionsDialog({ project, total, onDone, onClose }: { project: P
     setError(null)
     setStatus('Preparando…')
     try {
-      const chunks = await transcribe(project, model, language, (m) => {
-        if (m.type === 'status') setStatus(m.text)
-        else if (m.type === 'progress') setDownload((d) => ({ ...d, [m.file]: m.progress }))
-      })
-      const items = toCaptionItems(chunks, total)
+      const chunks = await transcribe(
+        project,
+        model,
+        language,
+        (m) => {
+          if (m.type === 'status') setStatus(m.text)
+          else if (m.type === 'progress') setDownload((d) => ({ ...d, [m.file]: m.progress }))
+        },
+        karaoke,
+      )
+      const items = karaoke ? wordsToCaptionItems(chunks, total) : toCaptionItems(chunks, total)
       if (!items.length) throw new Error('Nenhuma fala foi reconhecida.')
-      onDone(items, TEXT_PRESETS.find((p) => p.name === preset)?.style ?? {})
+      const style = TEXT_PRESETS.find((p) => p.name === preset)?.style ?? {}
+      onDone(items, karaoke ? { ...style, animation: 'karaoke', highlight: style.highlight ?? '#ffd84d' } : style)
     } catch (err) {
       setError(String(err instanceof Error ? err.message : err))
     }
@@ -60,6 +68,10 @@ export function CaptionsDialog({ project, total, onDone, onClose }: { project: P
             ))}
           </select>
         </div>
+        <label className="check">
+          <input type="checkbox" checked={karaoke} disabled={busy} onChange={(e) => setKaraoke(e.target.checked)} />
+          Destacar palavra a palavra (estilo karaokê)
+        </label>
         {status && !error && (
           <div className="caption-status">
             <p>{status}</p>

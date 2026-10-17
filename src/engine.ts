@@ -1,5 +1,6 @@
 import { AudioGraph, clipGainAt } from './audio'
 import { clipLayout } from './anim'
+import { grainPattern, shakeOffset, transitionState } from './fx'
 import { cssFilter } from './color'
 import { LutRenderer, parseCube, type Lut } from './lut'
 import { drawText } from './text'
@@ -167,23 +168,6 @@ export class PlaybackEngine {
     this.draw()
   }
 
-  /** Opacidade/escurecimento das transições de entrada e saída no instante `local`. */
-  private transition(clip: Clip, local: number) {
-    let alpha = 1
-    let dark = 0
-    const apply = (type: string, progress: number) => {
-      const k = Math.max(0, Math.min(1, progress))
-      if (type === 'dissolve') alpha *= k
-      else if (type === 'black') dark = Math.max(dark, 1 - k)
-    }
-    const ti = clip.transitionIn
-    if (ti.type !== 'none' && ti.duration > 0 && local < ti.duration) apply(ti.type, local / ti.duration)
-    const to = clip.transitionOut
-    const rest = clip.duration - local
-    if (to.type !== 'none' && to.duration > 0 && rest < to.duration) apply(to.type, rest / to.duration)
-    return { alpha, dark }
-  }
-
   draw() {
     const canvas = this.canvas
     const p = this.project
@@ -243,29 +227,64 @@ export class PlaybackEngine {
       // A saída da LUT pode ter outra resolução; o corte é em fração, então usamos as dimensões reais da fonte.
       const srcW = source instanceof HTMLCanvasElement ? source.width : sw
       const srcH = source instanceof HTMLCanvasElement ? source.height : sh
-      const g = clipLayout(clip, sw, sh, canvas.width, canvas.height, local)
+      const W = canvas.width
+      const H = canvas.height
+      const g = clipLayout(clip, sw, sh, W, H, local)
       if (g.opacity <= 0 || g.w < 1 || g.h < 1) continue
-      const { alpha, dark } = this.transition(clip, local)
+      const tr = transitionState(clip, local, W, H)
+      const fx = clip.effects
+      const shake = shakeOffset(fx?.shake ?? 0, local, W, H)
+      const w = g.w * tr.scale
+      const h = g.h * tr.scale
       ctx.save()
-      ctx.translate(g.cx, g.cy)
-      ctx.rotate((g.rotation * Math.PI) / 180)
-      ctx.globalAlpha = alpha * g.opacity
-      ctx.filter = cssFilter(clip.color)
+      ctx.translate(g.cx + tr.dx + shake.dx, g.cy + tr.dy + shake.dy)
+      ctx.rotate(((g.rotation + tr.rotation) * Math.PI) / 180)
+      if (fx?.mirror) ctx.scale(-1, 1)
+      ctx.globalAlpha = tr.alpha * g.opacity
+      const blur = fx?.blur ? ` blur(${(fx.blur * H) / 1080}px)` : ''
+      const css = cssFilter(clip.color)
+      ctx.filter = css === 'none' && !blur ? 'none' : `${css === 'none' ? '' : css}${blur}`.trim()
       ctx.drawImage(
         source,
         g.crop.left * srcW,
         g.crop.top * srcH,
         srcW * (1 - g.crop.left - g.crop.right),
         srcH * (1 - g.crop.top - g.crop.bottom),
-        -g.w / 2,
-        -g.h / 2,
-        g.w,
-        g.h,
+        -w / 2,
+        -h / 2,
+        w,
+        h,
       )
       ctx.filter = 'none'
-      if (dark > 0) {
-        ctx.fillStyle = `rgba(0,0,0,${dark})`
-        ctx.fillRect(-g.w / 2, -g.h / 2, g.w, g.h)
+      // Vinheta: escurece as bordas da camada.
+      if (fx?.vignette) {
+        const grad = ctx.createRadialGradient(0, 0, Math.min(w, h) * 0.25, 0, 0, Math.hypot(w, h) / 2)
+        grad.addColorStop(0, 'rgba(0,0,0,0)')
+        grad.addColorStop(1, `rgba(0,0,0,${0.85 * fx.vignette})`)
+        ctx.fillStyle = grad
+        ctx.fillRect(-w / 2, -h / 2, w, h)
+      }
+      // Granulado: textura de ruído que muda de posição a cada quadro.
+      if (fx?.grain) {
+        const pattern = ctx.createPattern(grainPattern(), 'repeat')
+        if (pattern) {
+          const frame = Math.floor(local * 30)
+          pattern.setTransform(new DOMMatrix().translate((frame * 73) % 256, (frame * 151) % 256))
+          ctx.globalAlpha = tr.alpha * g.opacity * 0.35 * fx.grain
+          ctx.globalCompositeOperation = 'overlay'
+          ctx.fillStyle = pattern
+          ctx.fillRect(-w / 2, -h / 2, w, h)
+          ctx.globalCompositeOperation = 'source-over'
+          ctx.globalAlpha = tr.alpha * g.opacity
+        }
+      }
+      if (tr.dark > 0) {
+        ctx.fillStyle = `rgba(0,0,0,${tr.dark})`
+        ctx.fillRect(-w / 2, -h / 2, w, h)
+      }
+      if (tr.white > 0) {
+        ctx.fillStyle = `rgba(255,255,255,${tr.white})`
+        ctx.fillRect(-w / 2, -h / 2, w, h)
       }
       ctx.restore()
     }

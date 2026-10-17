@@ -30,6 +30,7 @@ import {
   Snowflake,
   Rewind,
   BetweenHorizontalStart,
+  Eraser,
 } from 'lucide-react'
 import type { Clip } from './types'
 import { defaultTransform } from './anim'
@@ -37,6 +38,7 @@ import { clock } from './clock'
 import { ExportDialog } from './components/ExportDialog'
 import { Intro } from './components/Intro'
 import { LinkImportDialog } from './components/LinkImportDialog'
+import { BgRemoveDialog } from './components/BgRemoveDialog'
 import { detectBeats } from './beats'
 import { getPeaks } from './waveform'
 import type { ExportOptions } from './types'
@@ -45,7 +47,7 @@ import { PlaybackEngine } from './engine'
 import { projectDuration, SPEED_RAMPS, uid, useProject, type Template } from './store'
 import type { ExportPayload, Media, ProbeResult, Project } from './types'
 import { colorMatrix } from './color'
-import { renderTextPng } from './text'
+import { FRAME_ANIMATIONS, renderTextPng, renderTextSequence } from './text'
 import { MediaBin } from './components/MediaBin'
 import { Preview } from './components/Preview'
 import { Timeline } from './components/Timeline'
@@ -80,6 +82,7 @@ export function App() {
   const [dialog, setDialog] = useState<'captions' | null>(null)
   const [stemsClip, setStemsClip] = useState<string | null>(null)
   const [linkOpen, setLinkOpen] = useState(false)
+  const [bgClip, setBgClip] = useState<string | null>(null)
   const [filePath, setFilePath] = useState<string | null>(null)
   const [exporting, setExporting] = useState<{ progress: number } | null>(null)
   const [savedProject, setSavedProject] = useState<Project | null>(null)
@@ -365,6 +368,7 @@ export function App() {
     if (media?.kind === 'video') {
       items.push({ label: 'Congelar quadro no cursor', icon: Snowflake, onClick: () => void freezeFrame(clip) })
       items.push({ label: 'Inverter (reverso)', icon: Rewind, disabled: !!reversing, onClick: () => void reverseClip(clip) })
+      items.push({ label: 'Remover fundo (IA)…', icon: Eraser, onClick: () => setBgClip(clip.id) })
     }
     if (media?.kind === 'video' && media.hasAudio && !clip.audioDetached) items.push({ label: 'Separar áudio do vídeo', icon: Split, onClick: () => dispatch({ type: 'detachAudio', clipId: clip.id }) })
     if (audible) items.push({ label: 'Separar voz e instrumentos…', icon: Sparkles, onClick: () => setStemsClip(clip.id) })
@@ -563,9 +567,10 @@ export function App() {
 
   const runExport = async (options: ExportOptions) => {
     setExportOpen(false)
-    const payload: ExportPayload = { project, textImages: {}, colorMatrices: {}, options }
+    const payload: ExportPayload = { project, textImages: {}, colorMatrices: {}, textSequences: {}, options }
     for (const c of project.clips) {
-      if (c.text) payload.textImages[c.id] = renderTextPng(c.text, project.width, project.height)
+      if (c.text && FRAME_ANIMATIONS.has(c.text.animation)) payload.textSequences![c.id] = renderTextSequence(c.text, project.width, project.height, c.duration, project.fps)
+      else if (c.text) payload.textImages[c.id] = renderTextPng(c.text, project.width, project.height)
       else if (c.color.saturation !== 1 || c.color.hue !== 0 || c.color.sepia !== 0) payload.colorMatrices[c.id] = colorMatrix(c.color)
     }
     const off = window.api.onExportProgress((progress) => setExporting({ progress }))
@@ -764,6 +769,7 @@ export function App() {
               checkpoint={checkpoint}
               onSeek={seek}
               onDetectBeats={detectBeatsFor}
+              onVideoTool={(tool, clip) => (tool === 'freeze' ? void freezeFrame(clip) : tool === 'reverse' ? void reverseClip(clip) : setBgClip(clip.id))}
               onSeparate={(id) => {
                 setPlaying(false)
                 setStemsClip(id)
@@ -859,6 +865,29 @@ export function App() {
           }}
         />
       )}
+
+      {bgClip &&
+        (() => {
+          const clip = project.clips.find((c) => c.id === bgClip)
+          const media = clip?.mediaId ? project.media[clip.mediaId] : undefined
+          if (!clip || !media) return null
+          return (
+            <BgRemoveDialog
+              clip={clip}
+              media={media}
+              onClose={() => setBgClip(null)}
+              onDone={(r) => {
+                setBgClip(null)
+                if (!r.ok) {
+                  toast.error('Não foi possível remover o fundo', { detail: r.error })
+                  return
+                }
+                dispatch({ type: 'replaceClipMedia', clipId: clip.id, media: { ...r.media, id: uid(), name: `${media.name} (sem fundo)` } })
+                toast.success('Fundo removido', { detail: 'Coloque outra mídia na trilha de baixo para aparecer atrás.' })
+              }}
+            />
+          )
+        })()}
 
       {showIntro && <Intro onDone={() => setShowIntro(false)} />}
 

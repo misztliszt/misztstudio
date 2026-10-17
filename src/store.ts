@@ -1,5 +1,5 @@
 import { useCallback, useReducer } from 'react'
-import type { Clip, ColorAdjust, Marker, Media, Project, TextStyle, Track, TrackFx, TrackKind } from './types'
+import type { Clip, ColorAdjust, Marker, Media, Project, TextStyle, Track, TrackFx, TrackKind, VideoEffects } from './types'
 import { ANIM_PROPS, defaultTransform } from './anim'
 
 export const uid = () => Math.random().toString(36).slice(2, 10)
@@ -42,9 +42,12 @@ const clipDefaults = (): Omit<Clip, 'id' | 'mediaId' | 'trackId' | 'start' | 'in
   transitionOut: { type: 'none', duration: 0.5 },
   color: defaultColor(),
   transform: defaultTransform(),
+  effects: defaultEffects(),
   keyframes: {},
   speed: 1,
 })
+
+export const defaultEffects = (): VideoEffects => ({ blur: 0, vignette: 0, grain: 0, shake: 0, mirror: false })
 
 export function makeTrack(kind: TrackKind, name: string, fx?: Partial<TrackFx>): Track {
   return { id: uid(), kind, name, muted: false, hidden: false, volume: 1, fx: { ...defaultFx(), ...fx } }
@@ -135,7 +138,13 @@ export function normalizeProject(p: Project): Project {
     }),
     clips: p.clips.map((c) => {
       const t = defaultTransform()
-      return { ...clipDefaults(), ...c, color: { ...defaultColor(), ...c.color }, transform: { ...t, ...c.transform, crop: { ...t.crop, ...c.transform?.crop } } }
+      return {
+        ...clipDefaults(),
+        ...c,
+        color: { ...defaultColor(), ...c.color },
+        effects: { ...defaultEffects(), ...c.effects },
+        transform: { ...t, ...c.transform, crop: { ...t.crop, ...c.transform?.crop } },
+      }
     }),
   }
 }
@@ -169,7 +178,7 @@ export type Action =
   | { type: 'removeMedia'; mediaId: string }
   | { type: 'addClip'; mediaId: string; trackId?: string; start: number }
   | { type: 'addText'; start: number; duration?: number; trackId?: string; text?: Partial<TextStyle> }
-  | { type: 'addTexts'; trackName: string; items: { start: number; duration: number; content: string }[]; text: Partial<TextStyle> }
+  | { type: 'addTexts'; trackName: string; items: { start: number; duration: number; content: string; words?: TextStyle['words'] }[]; text: Partial<TextStyle> }
   | { type: 'detachAudio'; clipId: string }
   | { type: 'addStems'; sourceClipId: string; items: { label: string; media: Media }[]; muteOriginal: boolean }
   | { type: 'updateClip'; id: string; patch: Partial<Clip> }
@@ -292,7 +301,7 @@ function reduceCore(p: Project, a: Action): Project {
         start: it.start,
         in: 0,
         duration: Math.max(MIN_CLIP, it.duration),
-        text: { ...defaultText(), ...a.text, content: it.content },
+        text: { ...defaultText(), ...a.text, content: it.content, words: it.words },
       }))
       return { ...p, tracks: [track, ...p.tracks], clips: [...p.clips, ...clips] }
     }

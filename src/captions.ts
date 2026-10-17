@@ -22,6 +22,41 @@ export interface CaptionItem {
   start: number
   duration: number
   content: string
+  /** Tempos de cada palavra, relativos ao início da legenda (modo karaokê). */
+  words?: { t0: number; t1: number; w: string }[]
+}
+
+/**
+ * Agrupa palavras (com tempo individual) em legendas curtas: quebra ao passar de
+ * MAX_LINE caracteres ou numa pausa de mais de 0,6 s.
+ */
+export function wordsToCaptionItems(words: { text: string; start: number; end: number | null }[], total: number): CaptionItem[] {
+  const items: CaptionItem[] = []
+  let group: { w: string; s: number; e: number }[] = []
+  const flush = () => {
+    if (!group.length) return
+    const start = group[0].s
+    const end = Math.max(group[group.length - 1].e, start + 0.4)
+    items.push({
+      start,
+      duration: end - start,
+      content: group.map((g) => g.w).join(' '),
+      words: group.map((g) => ({ t0: g.s - start, t1: g.e - start, w: g.w })),
+    })
+    group = []
+  }
+  words.forEach((w, i) => {
+    const text = w.text.trim()
+    if (!text) return
+    const s = w.start
+    const e = w.end ?? words[i + 1]?.start ?? Math.min(total, s + 0.4)
+    const prev = group[group.length - 1]
+    const length = group.reduce((n, g) => n + g.w.length + 1, 0) + text.length
+    if (prev && (length > MAX_LINE || s - prev.e > 0.6)) flush()
+    group.push({ w: text, s, e })
+  })
+  flush()
+  return items
 }
 
 /** Quebra trechos longos em linhas curtas, dividindo o tempo pelo número de caracteres. */
@@ -51,7 +86,7 @@ export function toCaptionItems(chunks: { text: string; start: number; end: numbe
 }
 
 /** Mixa o áudio da timeline (16 kHz mono) e transcreve num worker. */
-export async function transcribe(project: Project, model: string, language: string, onMessage: (m: CaptionMessage) => void) {
+export async function transcribe(project: Project, model: string, language: string, onMessage: (m: CaptionMessage) => void, words = false) {
   onMessage({ type: 'status', text: 'Mixando o áudio da timeline…' })
   const buf = await window.api.mixdown(project, SAMPLE_RATE)
   const audio = new Float32Array(buf)
@@ -72,6 +107,6 @@ export async function transcribe(project: Project, model: string, language: stri
       worker.terminate()
       reject(new Error(e.message))
     }
-    worker.postMessage({ audio, model, language } satisfies CaptionRequest, [audio.buffer])
+    worker.postMessage({ audio, model, language, words } satisfies CaptionRequest, [audio.buffer])
   })
 }

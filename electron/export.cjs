@@ -98,7 +98,9 @@ function audioClipsOf(project, trackId) {
 
 function addClipInput(inputs, clip, media) {
   // Trecho da mídia de origem: a duração na timeline vezes a velocidade.
-  return inputs.add('-ss', n(clip.in), '-t', n(clip.duration * (clip.speed || 1)), '-i', media.path)
+  // VP9 com transparência só mantém o alfa com o decodificador libvpx.
+  const decoder = media.alpha ? ['-c:v', 'libvpx-vp9'] : []
+  return inputs.add('-ss', n(clip.in), '-t', n(clip.duration * (clip.speed || 1)), ...decoder, '-i', media.path)
 }
 
 /** Mixa as trilhas indicadas (sem efeitos de trilha) num rótulo de saída. */
@@ -197,7 +199,7 @@ const escapeFilterPath = (p) => p.replace(/\\/g, '/').replace(/:/g, '\\:').repla
  * afinação (via `runFfmpeg`) e devolve os argumentos do comando final.
  */
 async function prepareExport(payload, outPath, { workDir, runFfmpeg }) {
-  const { project, textImages = {}, colorMatrices = {} } = payload
+  const { project, textImages = {}, colorMatrices = {}, textSequences = {} } = payload
   const opts = { format: 'mp4', codec: 'h264', resolution: 0, fps: 0, quality: 'high', normalize: false, ...payload.options }
   const audioOnly = opts.format === 'mp3' || opts.format === 'wav'
   const { width: W, height: H, fps } = project
@@ -226,13 +228,29 @@ async function prepareExport(payload, outPath, { workDir, runFfmpeg }) {
     const chain = []
     let i
     let yExpr = '0'
-    if (clip.text) {
+    const seq = clip.text && textSequences[clip.id]
+    if (seq && seq.length) {
+      // Animação renderizada quadro a quadro na interface: imagens com duração (concat demuxer).
+      const dir = path.join(workDir, `text_${clip.id}`)
+      fs.mkdirSync(dir, { recursive: true })
+      const lines = []
+      seq.forEach((f, k) => {
+        const file = path.join(dir, `${String(k).padStart(5, '0')}.png`)
+        fs.writeFileSync(file, Buffer.from(f.png, 'base64'))
+        lines.push(`file '${file.replace(/\\/g, '/')}'`, `duration ${n(f.duration)}`)
+      })
+      lines.push(lines[lines.length - 2]) // o último arquivo repetido aplica a última duração
+      const list = path.join(dir, 'list.txt')
+      fs.writeFileSync(list, lines.join('\n'))
+      i = inputs.add('-f', 'concat', '-safe', '0', '-i', list)
+      chain.push(`[${i}:v]fps=${fps}`, 'format=rgba', `scale=${W}:${H}`, `trim=duration=${n(clip.duration)}`, `setpts=PTS-STARTPTS+${n(start)}/TB`)
+    } else if (clip.text) {
       const png = path.join(workDir, `text_${clip.id}.png`)
       fs.writeFileSync(png, Buffer.from(textImages[clip.id] || '', 'base64'))
       i = inputs.add('-loop', '1', '-framerate', String(fps), '-t', n(clip.duration), '-i', png)
       chain.push(`[${i}:v]format=rgba`, `scale=${W}:${H}`)
       chain.push(`setpts=PTS-STARTPTS+${n(start)}/TB`)
-      if (clip.text.animation !== 'none') {
+      if (clip.text.animation === 'fade' || clip.text.animation === 'slide') {
         const d = Math.min(TEXT_ANIM, clip.duration / 2)
         chain.push(`fade=t=in:st=${n(start)}:d=${n(d)}:alpha=1`, `fade=t=out:st=${n(end - d)}:d=${n(d)}:alpha=1`)
         if (clip.text.animation === 'slide') yExpr = `if(lt(t-${n(start)},${TEXT_ANIM}),(1-(t-${n(start)})/${TEXT_ANIM})*${n(SLIDE_DISTANCE * H)},0)`
@@ -261,13 +279,39 @@ async function prepareExport(payload, outPath, { workDir, runFfmpeg }) {
       const bh = ch * fit
       const kf = clip.keyframes || {}
       const local = `(t-${n(start)})`
-      const scaleE = animExpr(kf.scale, tr.scale, local)
-      const animatedScale = !!(kf.scale && kf.scale.length)
+      const ti = clip.transitionIn
+      const to = clip.transitionOut
+      const tIn = ti.type !== 'none' && ti.duration > 0 ? ti : null
+      const tOut = to.type !== 'none' && to.duration > 0 ? to : null
+      // Transições com movimento (mesmas fórmulas de src/fx.ts): e = 1 − p²(3 − 2p).
+      const pIn = tIn ? `clip((t-${n(start)})/${n(tIn.duration)},0,1)` : null
+      const pOut = tOut ? `clip((${n(end)}-t)/${n(tOut.duration)},0,1)` : null
+      const eIn = pIn ? `(1-(${pIn})*(${pIn})*(3-2*(${pIn})))` : '0'
+      const eOut = pOut ? `(1-(${pOut})*(${pOut})*(3-2*(${pOut})))` : '0'
+      const transScale = []
+      const transDx = []
+      const transDy = []
+      const transRot = []
+      let transMaxScale = 1
+      for (const [tt, e, dir] of [[tIn && tIn.type, eIn, 1], [tOut && tOut.type, eOut, -1]]) {
+        if (tt === 'zoomIn') (transScale.push(`(1+0.3*${e})`), (transMaxScale *= 1.3))
+        else if (tt === 'zoomOut') transScale.push(`(1-0.25*${e})`)
+        else if (tt === 'spin') (transScale.push(`(1-0.4*${e})`), transRot.push(`${-120 * dir}*${e}`))
+        else if (tt === 'slideLeft') transDx.push(`${dir}*${e}*W`)
+        else if (tt === 'slideRight') transDx.push(`${-dir}*${e}*W`)
+        else if (tt === 'slideUp') transDy.push(`${dir}*${e}*H`)
+        else if (tt === 'slideDown') transDy.push(`${-dir}*${e}*H`)
+      }
+
+      const kfScale = animExpr(kf.scale, tr.scale, local)
+      const scaleE = [kfScale, ...transScale].join('*')
+      const animatedScale = !!(kf.scale && kf.scale.length) || transScale.length > 0
       if (animatedScale) {
         chain.push(`scale=w='max(2,trunc(${n(bw)}*(${scaleE})/2)*2)':h='max(2,trunc(${n(bh)}*(${scaleE})/2)*2)':eval=frame`)
       } else {
         chain.push(`scale=${even(bw * tr.scale)}:${even(bh * tr.scale)}`)
       }
+      const fx = clip.effects || {}
       chain.push('format=rgba')
 
       const c = clip.color
@@ -281,20 +325,28 @@ async function prepareExport(payload, outPath, { workDir, runFfmpeg }) {
         chain.push(`colorchannelmixer=rr=${n(m[0])}:rg=${n(m[1])}:rb=${n(m[2])}:gr=${n(m[3])}:gg=${n(m[4])}:gb=${n(m[5])}:br=${n(m[6])}:bg=${n(m[7])}:bb=${n(m[8])}`)
       }
 
-      // Com escala animada, a camada muda de tamanho a cada quadro: um pad fixo (no maior tamanho) estabiliza os filtros seguintes.
-      if (animatedScale) {
-        const maxS = Math.max(tr.scale, ...kf.scale.map((k) => k.v))
-        chain.push(`pad=w=${even(bw * maxS) + 2}:h=${even(bh * maxS) + 2}:x='(ow-iw)/2':y='(oh-ih)/2':color=black@0:eval=frame`)
-      }
+      // Efeitos da camada (antes do pad/rotação, quando a imagem ainda é opaca).
+      if (fx.blur > 0) chain.push(`gblur=sigma=${n((fx.blur * H) / 1080)}`)
+      if (fx.vignette > 0) chain.push(`vignette=angle=${n(0.15 + fx.vignette * 0.9)}`)
+      if (fx.grain > 0) chain.push(`noise=alls=${Math.round(fx.grain * 40)}:allf=t+u`)
+      if (fx.blur > 0 || fx.vignette > 0 || fx.grain > 0) chain.push('format=rgba')
 
-      const ti = clip.transitionIn
-      const to = clip.transitionOut
-      if (ti.type !== 'none' && ti.duration > 0) {
-        chain.push(`fade=t=in:st=${n(start)}:d=${n(ti.duration)}${ti.type === 'dissolve' ? ':alpha=1' : ':color=black'}`)
+      // Com escala animada, a camada muda de tamanho a cada quadro: ela é centralizada numa tela
+      // transparente fixa (no maior tamanho), recriada a cada quadro, para não deixar rastro.
+      if (animatedScale) {
+        const maxS = Math.max(tr.scale, ...(kf.scale || []).map((k) => k.v)) * transMaxScale
+        filters.push(chain.join(',') + `[s${i}]`)
+        filters.push(`color=c=black@0:s=${even(bw * maxS) + 2}x${even(bh * maxS) + 2}:r=${fps}:d=${n(clip.duration)},format=rgba,setpts=PTS-STARTPTS+${n(start)}/TB[cv${i}]`)
+        chain.length = 0
+        chain.push(`[cv${i}][s${i}]overlay=x='(W-w)/2':y='(H-h)/2':eval=frame:eof_action=pass:format=auto`)
       }
-      if (to.type !== 'none' && to.duration > 0) {
-        chain.push(`fade=t=out:st=${n(end - to.duration)}:d=${n(to.duration)}${to.type === 'dissolve' ? ':alpha=1' : ':color=black'}`)
-      }
+      // Espelho só depois do tamanho fixo: o hflip do FFmpeg cai se o quadro muda de tamanho.
+      if (fx.mirror) chain.push('hflip')
+
+      // Opacidade e cor das transições (lineares, como em src/fx.ts).
+      const fadeKind = (type) => (type === 'black' ? ':color=black' : type === 'flash' ? ':color=white' : ['dissolve', 'zoomIn', 'zoomOut', 'spin'].includes(type) ? ':alpha=1' : null)
+      if (tIn && fadeKind(tIn.type)) chain.push(`fade=t=in:st=${n(start)}:d=${n(tIn.duration)}${fadeKind(tIn.type)}`)
+      if (tOut && fadeKind(tOut.type)) chain.push(`fade=t=out:st=${n(end - tOut.duration)}:d=${n(tOut.duration)}${fadeKind(tOut.type)}`)
 
       // Opacidade: fixa via canal alfa; animada via geq (mais lento, usado só quando necessário).
       if (kf.opacity && kf.opacity.length) {
@@ -303,16 +355,25 @@ async function prepareExport(payload, outPath, { workDir, runFfmpeg }) {
         chain.push(`colorchannelmixer=aa=${n(Math.max(0, tr.opacity))}`)
       }
 
-      const rotAnimated = !!(kf.rotation && kf.rotation.length)
+      const rotAnimated = !!(kf.rotation && kf.rotation.length) || transRot.length > 0
       if (rotAnimated || Math.abs(tr.rotation) > 0.01) {
-        const rot = rotAnimated ? animExpr(kf.rotation, tr.rotation, local) : n(tr.rotation)
-        chain.push(`rotate=a='(${rot})*PI/180':ow='hypot(iw,ih)':oh=ow:c=none`)
+        const rot = [animExpr(kf.rotation, tr.rotation, local), ...transRot].join('+')
+        chain.push(`rotate=a='(${rot})*PI/180':ow='hypot(iw,ih)':oh=ow:c=black@0`)
       }
 
       const xE = animExpr(kf.x, tr.x, local)
       const yE = animExpr(kf.y, tr.y, local)
+      // Deslocamentos extras: transições de deslizar e tremor de câmera (fórmula de src/fx.ts shakeOffset).
+      const dx = [...transDx]
+      const dy = [...transDy]
+      if (fx.shake > 0) {
+        dx.push(`${n(fx.shake * 0.012)}*W*(sin(${local}*29.1)+0.6*sin(${local}*47.7+1.3))`)
+        dy.push(`${n(fx.shake * 0.012)}*H*(sin(${local}*33.7+0.7)+0.6*sin(${local}*53.1+2.1))`)
+      }
+      const xOff = dx.length ? `+${dx.join('+')}` : ''
+      const yOff = dy.length ? `+${dy.join('+')}` : ''
       filters.push(chain.join(',') + `[v${i}]`)
-      filters.push(`[${lastVideo}][v${i}]overlay=x='(W-w)/2+(${xE})*W':y='(H-h)/2+(${yE})*H':eval=frame:eof_action=pass:enable='between(t,${n(start)},${n(end)})'[o${i}]`)
+      filters.push(`[${lastVideo}][v${i}]overlay=x='(W-w)/2+(${xE})*W${xOff}':y='(H-h)/2+(${yE})*H${yOff}':eval=frame:eof_action=pass:enable='between(t,${n(start)},${n(end)})'[o${i}]`)
       lastVideo = `o${i}`
       continue
     }

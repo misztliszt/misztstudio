@@ -17,6 +17,8 @@ export interface Media {
   codec?: string
   /** Versão leve usada só na prévia (a exportação usa o original). */
   proxy?: string | null
+  /** Vídeo com canal de transparência (ex.: fundo removido, WebM VP9). */
+  alpha?: boolean
   /** Grade de batidas detectada (sob demanda). */
   beats?: { bpm: number; offset: number } | null
 }
@@ -58,7 +60,21 @@ export interface Track {
   fx: TrackFx
 }
 
-export type TransitionType = 'none' | 'dissolve' | 'black'
+export type TransitionType = 'none' | 'dissolve' | 'black' | 'flash' | 'zoomIn' | 'zoomOut' | 'slideLeft' | 'slideRight' | 'slideUp' | 'slideDown' | 'spin'
+
+/** Efeitos de vídeo do clipe (mesmas fórmulas na prévia e na exportação). */
+export interface VideoEffects {
+  /** Desfoque em px (referência: altura 1080). */
+  blur: number
+  /** 0..1 */
+  vignette: number
+  /** 0..1 */
+  grain: number
+  /** Tremor de câmera 0..1. */
+  shake: number
+  /** Espelhar na horizontal. */
+  mirror: boolean
+}
 export interface Transition {
   type: TransitionType
   duration: number
@@ -79,7 +95,7 @@ export interface ColorAdjust {
   lut: string | null
 }
 
-export type TextAnimation = 'none' | 'fade' | 'slide'
+export type TextAnimation = 'none' | 'fade' | 'slide' | 'pop' | 'bounce' | 'typewriter' | 'wordByWord' | 'karaoke'
 
 export interface TextStyle {
   content: string
@@ -95,6 +111,10 @@ export interface TextStyle {
   x: number
   y: number
   animation: TextAnimation
+  /** Cor de destaque do karaokê. */
+  highlight?: string
+  /** Tempos de cada palavra (s desde o início do clipe), vindos do Whisper. */
+  words?: { t0: number; t1: number; w: string }[]
 }
 
 export interface VolumeKey {
@@ -149,6 +169,7 @@ export interface Clip {
   /** O áudio deste clipe de vídeo foi separado para uma trilha de áudio. */
   audioDetached?: boolean
   transform: Transform
+  effects: VideoEffects
   keyframes: Partial<Record<AnimProp, Keyframe[]>>
   /** Velocidade de reprodução (0.25–4). A duração na timeline já considera a velocidade. */
   speed: number
@@ -181,6 +202,8 @@ export interface ExportPayload {
   project: Project
   /** PNG (base64) de cada clipe de texto, do tamanho do quadro. */
   textImages: Record<string, string>
+  /** Animações de texto renderizadas quadro a quadro: imagens com a duração de cada uma. */
+  textSequences?: Record<string, { png: string; duration: number }[]>
   /** Matriz de cor 3×3 (saturação/matiz/sépia) de cada clipe com ajuste. */
   colorMatrices: Record<string, number[]>
   options: ExportOptions
@@ -262,6 +285,10 @@ declare global {
       onExportProgress(cb: (value: number) => void): () => void
       makeProxy(path: string): Promise<string>
       extractFrame(path: string, time: number): Promise<ProbeResult>
+      bgPrepare(path: string, inPoint: number, duration: number): Promise<{ id: string; url: string; width: number; height: number; frames: number; fps: number }>
+      bgWriteMasks(id: string, data: ArrayBuffer): Promise<void>
+      bgFinish(id: string, hasAudio: boolean): Promise<ProbeResult>
+      bgCancel(id: string): Promise<void>
       reverseMedia(path: string, inPoint: number, duration: number, hasAudio: boolean): Promise<ProbeResult>
       onProxyProgress(cb: (path: string, value: number) => void): () => void
       pickLut(): Promise<string | null>

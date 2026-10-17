@@ -3,6 +3,9 @@ import {
   ArrowDownToLine,
   AudioLines,
   Drum,
+  Eraser,
+  Rewind,
+  Snowflake,
   Clock,
   Film,
   Gauge,
@@ -23,13 +26,14 @@ import {
   X,
 } from 'lucide-react'
 import type { Action } from '../store'
-import { defaultColor, maxClipDuration } from '../store'
+import { defaultColor, defaultEffects, maxClipDuration } from '../store'
+import { TRANSITION_OPTIONS } from '../fx'
 import { SpeedSection, TransformSection } from './TransformSection'
-import type { Clip, ColorAdjust, Project, ScaleName, TextStyle, Track, TrackFx, Transition, TransitionType } from '../types'
+import type { Clip, ColorAdjust, Project, ScaleName, TextStyle, Track, TrackFx, Transition, TransitionType, VideoEffects } from '../types'
 import type { PlaybackEngine } from '../engine'
 import { clipGainAt } from '../audio'
 import { COLOR_PRESETS } from '../color'
-import { FONTS, TEXT_PRESETS } from '../text'
+import { FONTS, TEXT_ANIMATIONS, TEXT_PRESETS } from '../text'
 import { KEY_NAMES, SCALE_NAMES, semitonesBetween, type Mode } from '../music'
 import { formatTime } from '../format'
 import { NumberField, Section, Segmented, Select, Slider, Toggle } from './controls'
@@ -46,6 +50,7 @@ interface Props {
   onSeparate: (clipId: string) => void
   onSeek: (t: number) => void
   onDetectBeats: (mediaId: string) => void
+  onVideoTool: (tool: 'freeze' | 'reverse' | 'bg', clip: Clip) => void
 }
 
 const RESOLUTIONS = [
@@ -74,7 +79,7 @@ export function Inspector(props: Props) {
 
 type ClipTab = 'text' | 'video' | 'color' | 'audio'
 
-function ClipInspector({ project, clip, time, dispatch, checkpoint, onSeparate, onSeek, onDetectBeats }: Props & { clip: Clip }) {
+function ClipInspector({ project, clip, time, dispatch, checkpoint, onSeparate, onSeek, onDetectBeats, onVideoTool }: Props & { clip: Clip }) {
   const media = clip.mediaId ? project.media[clip.mediaId] : undefined
   const set = (patch: Partial<Clip>, merge = false) => dispatch({ type: 'updateClip', id: clip.id, patch }, merge)
   const max = maxClipDuration(media, clip)
@@ -126,6 +131,20 @@ function ClipInspector({ project, clip, time, dispatch, checkpoint, onSeparate, 
 
         {current === 'video' && media?.kind === 'video' && <SpeedSection clip={clip} dispatch={dispatch} checkpoint={checkpoint} />}
 
+        {current === 'video' && media?.kind === 'video' && (
+          <Section title="Ferramentas de vídeo" icon={Wand2}>
+            <button className="btn action-row accent" onClick={() => onVideoTool('bg', clip)}>
+              <Eraser size={15} /> {media.alpha ? 'Fundo já removido · refazer' : 'Remover fundo com IA…'}
+            </button>
+            <button className="btn action-row" onClick={() => onVideoTool('freeze', clip)}>
+              <Snowflake size={15} /> Congelar quadro no cursor
+            </button>
+            <button className="btn action-row" onClick={() => onVideoTool('reverse', clip)}>
+              <Rewind size={15} /> Inverter (reverso)
+            </button>
+          </Section>
+        )}
+
         {current === 'video' && visual && (
           <Section title="Transições" icon={Layers}>
             <TransitionRow label="Entrada" value={clip.transitionIn} max={clip.duration} onChange={(t) => set({ transitionIn: t })} />
@@ -146,6 +165,8 @@ function ClipInspector({ project, clip, time, dispatch, checkpoint, onSeparate, 
             )}
           </Section>
         )}
+
+        {current === 'video' && visual && <EffectsSection effects={clip.effects ?? defaultEffects()} onChange={(e, merge) => set({ effects: { ...(clip.effects ?? defaultEffects()), ...e } }, merge)} checkpoint={checkpoint} />}
 
         {current === 'color' && visual && <ColorSection color={clip.color} onChange={(c, merge) => set({ color: { ...clip.color, ...c } }, merge)} checkpoint={checkpoint} />}
 
@@ -232,11 +253,22 @@ function VolumeKeys({ clip, time, set, checkpoint }: { clip: Clip; time: number;
   )
 }
 
-const TRANSITIONS: { value: TransitionType; label: string }[] = [
-  { value: 'none', label: 'Nenhuma' },
-  { value: 'dissolve', label: 'Dissolver' },
-  { value: 'black', label: 'Do / para preto' },
-]
+const TRANSITIONS: { value: TransitionType; label: string }[] = TRANSITION_OPTIONS
+
+function EffectsSection({ effects, onChange, checkpoint }: { effects: VideoEffects; onChange: (e: Partial<VideoEffects>, merge?: boolean) => void; checkpoint: () => void }) {
+  const pct = (v: number) => `${Math.round(v * 100)}%`
+  return (
+    <Section title="Efeitos" icon={Wand2} right={<button className="btn small ghost" onClick={() => onChange({ blur: 0, vignette: 0, grain: 0, shake: 0, mirror: false })} data-tip="Remover efeitos" data-tip-pos="left"><RotateCcw size={13} /></button>}>
+      <Slider label="Desfoque" value={effects.blur} min={0} max={40} step={0.5} format={(v) => `${v.toFixed(1)} px`} onStart={checkpoint} onChange={(v) => onChange({ blur: v }, true)} onReset={() => onChange({ blur: 0 })} />
+      <Slider label="Vinheta" value={effects.vignette} min={0} max={1} format={pct} onStart={checkpoint} onChange={(v) => onChange({ vignette: v }, true)} onReset={() => onChange({ vignette: 0 })} />
+      <Slider label="Granulado" value={effects.grain} min={0} max={1} format={pct} onStart={checkpoint} onChange={(v) => onChange({ grain: v }, true)} onReset={() => onChange({ grain: 0 })} />
+      <Slider label="Tremor de câmera" value={effects.shake} min={0} max={1} format={pct} onStart={checkpoint} onChange={(v) => onChange({ shake: v }, true)} onReset={() => onChange({ shake: 0 })} />
+      <div className="toggle-row">
+        <Toggle checked={effects.mirror} onChange={(v) => onChange({ mirror: v })} label="Espelhar" />
+      </div>
+    </Section>
+  )
+}
 
 function TransitionRow({ label, value, max, onChange }: { label: string; value: Transition; max: number; onChange: (t: Transition) => void }) {
   return (
@@ -314,11 +346,7 @@ function ColorSection({ color, onChange, checkpoint }: { color: ColorAdjust; onC
 }
 
 const FONT_OPTIONS = FONTS.map((f) => ({ value: f, label: f }))
-const ANIMATIONS: { value: TextStyle['animation']; label: string }[] = [
-  { value: 'none', label: 'Nenhuma' },
-  { value: 'fade', label: 'Aparecer' },
-  { value: 'slide', label: 'Deslizar para cima' },
-]
+const ANIMATIONS: { value: TextStyle['animation']; label: string }[] = TEXT_ANIMATIONS
 
 function TextSection({ text, onChange, checkpoint }: { text: TextStyle; onChange: (t: Partial<TextStyle>, merge?: boolean) => void; checkpoint: () => void }) {
   return (
@@ -361,6 +389,13 @@ function TextSection({ text, onChange, checkpoint }: { text: TextStyle; onChange
           <label>Animação</label>
           <Select value={text.animation} options={ANIMATIONS} onChange={(animation) => onChange({ animation })} />
         </div>
+        {text.animation === 'karaoke' && (
+          <div className="field">
+            <label>Cor do destaque</label>
+            <input type="color" className="color-input" value={text.highlight ?? '#ffd84d'} onChange={(e) => onChange({ highlight: e.target.value }, true)} onPointerDown={checkpoint} />
+          </div>
+        )}
+        {text.words?.length ? <p className="hint">Tempos de {text.words.length} palavras vindos da transcrição.</p> : null}
       </Section>
     </>
   )

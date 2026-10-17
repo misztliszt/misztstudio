@@ -9,6 +9,8 @@ export interface CaptionRequest {
   audio: Float32Array
   model: string
   language: string
+  /** Tempos por palavra (para legendas karaokê) em vez de por frase. */
+  words?: boolean
 }
 
 export type CaptionMessage =
@@ -42,11 +44,11 @@ function load(model: string) {
 }
 
 self.onmessage = async (e: MessageEvent<CaptionRequest>) => {
-  const { audio, model, language } = e.data
+  const { audio, model, language, words } = e.data
   try {
     const asr = await load(model)
-    post({ type: 'status', text: 'Transcrevendo…' })
-    const out = (await asr(audio, { language, task: 'transcribe', chunk_length_s: 30, stride_length_s: 5, return_timestamps: true })) as {
+    post({ type: 'status', text: words ? 'Transcrevendo palavra por palavra…' : 'Transcrevendo…' })
+    const out = (await asr(audio, { language, task: 'transcribe', chunk_length_s: 30, stride_length_s: 5, return_timestamps: words ? 'word' : true })) as {
       chunks?: { text: string; timestamp: [number, number | null] }[]
     }
     post({ type: 'done', chunks: (out.chunks ?? []).map((c) => ({ text: c.text.trim(), start: c.timestamp[0], end: c.timestamp[1] })) })

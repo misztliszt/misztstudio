@@ -374,6 +374,61 @@ app.whenReady().then(() => {
 
   ipcMain.handle('media:proxy', (_e, filePath) => makeProxy(filePath))
 
+  // ---------- Remoção de fundo (máscaras calculadas pela IA na interface) ----------
+  const bgJobs = new Map()
+  ipcMain.handle('bg:prepare', async (_e, filePath, inPoint, duration) => {
+    const info = JSON.parse(await run(FFPROBE, ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height,r_frame_rate', '-of', 'json', filePath]))
+    const st = info.streams[0]
+    const [num, den] = String(st.r_frame_rate || '30/1').split('/').map(Number)
+    const fps = Math.min(60, num / (den || 1)) || 30
+    // Análise mais leve: 384 px e no máximo 20 quadros/s (a máscara é ampliada e repetida depois).
+    const aFps = Math.min(fps, 20)
+    const W = 384
+    const H = Math.max(2, Math.round((W * st.height) / st.width / 2) * 2)
+    const id = crypto.randomUUID()
+    const dir = path.join(app.getPath('userData'), 'bgremove', id)
+    fs.mkdirSync(dir, { recursive: true })
+    const raw = path.join(dir, 'frames.rgb')
+    await run(FFMPEG, ['-y', '-hide_banner', '-loglevel', 'error', '-ss', inPoint.toFixed(3), '-t', duration.toFixed(3), '-i', filePath, '-vf', `fps=${aFps},scale=${W}:${H}`, '-f', 'rawvideo', '-pix_fmt', 'rgb24', raw])
+    const frames = Math.floor(fs.statSync(raw).size / (W * H * 3))
+    const masks = path.join(dir, 'masks.gray')
+    fs.writeFileSync(masks, Buffer.alloc(0))
+    bgJobs.set(id, { dir, raw, masks, filePath, inPoint, duration, fps, aFps, W, H, srcW: st.width, srcH: st.height })
+    return { id, url: mediaUrl(raw), width: W, height: H, frames, fps: aFps }
+  })
+  ipcMain.handle('bg:writeMasks', (_e, id, data) => {
+    const job = bgJobs.get(id)
+    if (job) fs.appendFileSync(job.masks, Buffer.from(data))
+  })
+  ipcMain.handle('bg:finish', async (_e, id, hasAudio) => {
+    const job = bgJobs.get(id)
+    if (!job) throw new Error('Tarefa não encontrada')
+    const outDir = path.join(app.getPath('userData'), 'bgremoved')
+    fs.mkdirSync(outDir, { recursive: true })
+    const out = path.join(outDir, `${id}.webm`)
+    const audio = hasAudio ? ['-map', '0:a:0?', '-c:a', 'libopus', '-b:a', '160k'] : ['-an']
+    // Máscara em baixa resolução, ampliada e suavizada; vira o canal alfa do vídeo original (VP9 com transparência).
+    await run(FFMPEG, [
+      '-y', '-hide_banner', '-loglevel', 'error',
+      '-ss', job.inPoint.toFixed(3), '-t', job.duration.toFixed(3), '-i', job.filePath,
+      '-f', 'rawvideo', '-pix_fmt', 'gray', '-s', `${job.W}x${job.H}`, '-r', String(job.aFps), '-i', job.masks,
+      '-filter_complex', `[0:v]fps=${job.fps},format=rgba[v];[1:v]fps=${job.fps},scale=${job.srcW}:${job.srcH}:flags=bicubic,gblur=sigma=1.2,format=gray[m];[v][m]alphamerge,format=yuva420p[out]`,
+      '-map', '[out]', ...audio,
+      '-c:v', 'libvpx-vp9', '-pix_fmt', 'yuva420p', '-auto-alt-ref', '0', '-crf', '28', '-b:v', '0', '-row-mt', '1', '-deadline', 'good', '-cpu-used', '4',
+      '-shortest', out,
+    ])
+    fs.rmSync(job.dir, { recursive: true, force: true })
+    bgJobs.delete(id)
+    const probed = (await probeMany([out]))[0]
+    if (probed.ok) probed.media.alpha = true
+    return probed
+  })
+  ipcMain.handle('bg:cancel', (_e, id) => {
+    const job = bgJobs.get(id)
+    if (job) fs.rmSync(job.dir, { recursive: true, force: true })
+    bgJobs.delete(id)
+  })
+
   /** Quadro parado (PNG) da mídia no instante `time` da fonte. */
   ipcMain.handle('media:frame', async (_e, filePath, time) => {
     const dir = path.join(app.getPath('userData'), 'frames')
