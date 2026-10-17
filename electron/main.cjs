@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, protocol, shell } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog, protocol, shell, session } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 const os = require('node:os')
@@ -8,6 +8,7 @@ const { Readable } = require('node:stream')
 const { prepareExport, buildMixdownArgs } = require('./export.cjs')
 const { StemEngine } = require('./stems.cjs')
 const { Downloader } = require('./downloader.cjs')
+const { AudioTools } = require('./audiotools.cjs')
 
 const isDev = process.argv.includes('--dev')
 
@@ -283,6 +284,10 @@ app.whenReady().then(() => {
   protocol.handle('media', handleMedia)
   protocol.handle('app', handleApp)
 
+  // Microfone para gravação de narração (só a nossa interface pede).
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => callback(permission === 'media' || permission === 'clipboard-read'))
+  session.defaultSession.setPermissionCheckHandler((_wc, permission) => permission === 'media' || permission === 'clipboard-read')
+
   ipcMain.handle('recent:list', () =>
     readRecent().map((r) => ({ ...r, exists: fs.existsSync(r.path) })),
   )
@@ -293,6 +298,8 @@ app.whenReady().then(() => {
     return { filePath, json }
   })
   ipcMain.handle('shell:show', (_e, filePath) => shell.showItemInFolder(filePath))
+  // Abre a tela de privacidade do microfone do Windows (o usuário decide lá).
+  ipcMain.handle('shell:micSettings', () => shell.openExternal(process.platform === 'win32' ? 'ms-settings:privacy-microphone' : 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone'))
 
   ipcMain.handle('project:initial', () => {
     const filePath = projectFromArgs(process.argv)
@@ -373,6 +380,30 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('media:proxy', (_e, filePath) => makeProxy(filePath))
+
+  // ---------- Áudio de estúdio ----------
+  const audioTools = new AudioTools(app.getPath('userData'), FFMPEG)
+  const sendTools = (msg) => mainWindow && mainWindow.webContents.send('vst:progress', msg)
+  const probeOne = async (file) => (await probeMany([file]))[0]
+  ipcMain.handle('audio:clean', async (_e, filePath, inPoint, duration, level) => probeOne(await audioTools.clean(filePath, inPoint, duration, level)))
+  ipcMain.handle('vst:status', () => audioTools.status())
+  ipcMain.handle('vst:install', () => audioTools.install(sendTools))
+  ipcMain.handle('vst:scan', () => audioTools.scan())
+  ipcMain.handle('vst:editor', (_e, pluginPath, state) => audioTools.editor(pluginPath, state))
+  ipcMain.handle('vst:apply', async (_e, filePath, inPoint, duration, pluginPath, state) => probeOne(await audioTools.apply(filePath, inPoint, duration, pluginPath, state)))
+
+  /** Salva uma gravação do microfone (WebM/Opus do MediaRecorder) e converte para WAV. */
+  ipcMain.handle('record:save', async (_e, data) => {
+    const dir = path.join(downloader.outDir, 'Gravações')
+    fs.mkdirSync(dir, { recursive: true })
+    const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19)
+    const webm = path.join(dir, `Gravação ${stamp}.webm`)
+    const wav = webm.replace(/\.webm$/, '.wav')
+    fs.writeFileSync(webm, Buffer.from(data))
+    await run(FFMPEG, ['-y', '-hide_banner', '-loglevel', 'error', '-i', webm, '-ac', '2', '-ar', '48000', '-c:a', 'pcm_s24le', wav])
+    fs.rmSync(webm, { force: true })
+    return probeOne(wav)
+  })
 
   // ---------- Remoção de fundo (máscaras calculadas pela IA na interface) ----------
   const bgJobs = new Map()

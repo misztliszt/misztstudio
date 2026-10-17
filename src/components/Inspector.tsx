@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import {
   ArrowDownToLine,
   AudioLines,
+  AudioWaveform,
+  Plug,
   Drum,
   Eraser,
   Rewind,
@@ -51,6 +53,7 @@ interface Props {
   onSeek: (t: number) => void
   onDetectBeats: (mediaId: string) => void
   onVideoTool: (tool: 'freeze' | 'reverse' | 'bg', clip: Clip) => void
+  onAudioTool: (tool: 'light' | 'medium' | 'strong' | 'vst', clip: Clip) => void
 }
 
 const RESOLUTIONS = [
@@ -79,7 +82,7 @@ export function Inspector(props: Props) {
 
 type ClipTab = 'text' | 'video' | 'color' | 'audio'
 
-function ClipInspector({ project, clip, time, dispatch, checkpoint, onSeparate, onSeek, onDetectBeats, onVideoTool }: Props & { clip: Clip }) {
+function ClipInspector({ project, clip, time, dispatch, checkpoint, onSeparate, onSeek, onDetectBeats, onVideoTool, onAudioTool }: Props & { clip: Clip }) {
   const media = clip.mediaId ? project.media[clip.mediaId] : undefined
   const set = (patch: Partial<Clip>, merge = false) => dispatch({ type: 'updateClip', id: clip.id, patch }, merge)
   const max = maxClipDuration(media, clip)
@@ -186,6 +189,27 @@ function ClipInspector({ project, clip, time, dispatch, checkpoint, onSeparate, 
                   )}
                   <button className="btn action-row accent" onClick={() => onSeparate(clip.id)}>
                     <Sparkles size={15} /> Separar voz e instrumentos…
+                  </button>
+                  <div className="clean-row">
+                    <span>
+                      <AudioWaveform size={15} /> Limpar voz
+                    </span>
+                    <div className="segmented small">
+                      {(
+                        [
+                          ['light', 'Leve'],
+                          ['medium', 'Média'],
+                          ['strong', 'Forte'],
+                        ] as const
+                      ).map(([lvl, label]) => (
+                        <button key={lvl} onClick={() => onAudioTool(lvl, clip)}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <button className="btn action-row" onClick={() => onAudioTool('vst', clip)}>
+                    <Plug size={15} /> Plugin VST3…
                   </button>
                   <button className="btn action-row" onClick={() => media && onDetectBeats(media.id)}>
                     <Drum size={15} /> {media?.beats ? `Batidas: ${media.beats.bpm} BPM · detectar de novo` : 'Detectar batidas (ímã na timeline)'}

@@ -3295,3 +3295,88 @@ button.track-name:hover {
   flex-wrap: wrap;
   gap: 4px;
 }
+
+/* ---------- Áudio de estúdio ---------- */
+.clean-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 34px;
+  padding: 0 4px 0 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+}
+.clean-row > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+.segmented.small {
+  padding: 2px;
+}
+.segmented.small button {
+  height: 22px;
+  padding: 0 8px;
+  font-size: 11.5px;
+}
+.segmented.small button:hover {
+  background: var(--surface-4);
+  color: var(--text);
+}
+.record-dialog {
+  width: 440px;
+}
+.input-meter {
+  height: 8px;
+  margin-top: 12px;
+  border-radius: 4px;
+  background: var(--surface-1);
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.input-meter div {
+  height: 100%;
+  background: linear-gradient(90deg, #22c38e 0%, #22c38e 70%, #f5d34c 88%, #ff4d4d 100%);
+  background-size: 400px 100%;
+  transition: width 0.05s linear;
+}
+.input-meter div.clip {
+  box-shadow: 0 0 0 1px #ff4d4d;
+}
+.record-center {
+  height: 64px;
+  display: grid;
+  place-items: center;
+}
+.countdown {
+  font-size: 40px;
+  font-weight: 700;
+  color: var(--accent);
+  animation: pop-in 0.3s var(--ease);
+}
+.rec-time {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 22px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.rec-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--danger);
+  animation: rec-blink 1s infinite;
+}
+.export-icon.recording {
+  background: var(--danger);
+}
+@keyframes rec-blink {
+  50% {
+    opacity: 0.3;
+  }
+}

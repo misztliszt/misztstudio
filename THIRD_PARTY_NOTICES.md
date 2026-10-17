@@ -20,5 +20,7 @@ O Miszt Studio é software proprietário (veja [LICENSE](LICENSE)), mas usa os c
 | [yt-dlp](https://github.com/yt-dlp/yt-dlp) | Importar vídeos por link | The Unlicense (domínio público) |
 | [Demucs](https://github.com/facebookresearch/demucs) + [PyTorch](https://pytorch.org/) | Separar voz e instrumentos | MIT / BSD-3-Clause |
 | Modelos [Whisper](https://github.com/openai/whisper) (via Hugging Face) | Transcrição | MIT |
+| Modelo [MODNet](https://github.com/ZHKKKe/MODNet) (`Xenova/modnet`) | Remover fundo de vídeo | Apache 2.0 |
+| [pedalboard](https://github.com/spotify/pedalboard) (Spotify) | Hospedar plugins VST3 | GPL v3. Executado como programa separado, num Python próprio; código-fonte em https://github.com/spotify/pedalboard |
 
 O texto completo de cada licença acompanha o respectivo pacote (em `node_modules/<pacote>/LICENSE` no código e em `resources/` no aplicativo instalado) ou está disponível no site do projeto.

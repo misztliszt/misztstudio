@@ -31,6 +31,9 @@ import {
   Rewind,
   BetweenHorizontalStart,
   Eraser,
+  AudioWaveform,
+  Plug,
+  Mic,
 } from 'lucide-react'
 import type { Clip } from './types'
 import { defaultTransform } from './anim'
@@ -39,6 +42,8 @@ import { ExportDialog } from './components/ExportDialog'
 import { Intro } from './components/Intro'
 import { LinkImportDialog } from './components/LinkImportDialog'
 import { BgRemoveDialog } from './components/BgRemoveDialog'
+import { VstDialog } from './components/VstDialog'
+import { RecordDialog } from './components/RecordDialog'
 import { detectBeats } from './beats'
 import { getPeaks } from './waveform'
 import type { ExportOptions } from './types'
@@ -316,6 +321,41 @@ export function App() {
     [project.media, reversing, dispatch, toast],
   )
 
+  // ---------- Áudio de estúdio ----------
+  const [vstClip, setVstClip] = useState<string | null>(null)
+  const [recordOpen, setRecordOpen] = useState(false)
+
+  /** Usa um áudio processado do trecho do clipe: em vídeo, separa o áudio; em áudio, troca a mídia. */
+  const applyProcessedAudio = useCallback(
+    (clip: Clip, r: ProbeResult, suffix: string) => {
+      const media = clip.mediaId ? project.media[clip.mediaId] : undefined
+      if (!media || !r.ok) {
+        toast.error('Não foi possível processar o áudio', { detail: r.ok ? undefined : r.error })
+        return false
+      }
+      const processed = { ...r.media, id: uid(), name: `${media.name} (${suffix})` }
+      if (media.kind === 'video') dispatch({ type: 'detachAudio', clipId: clip.id, media: processed })
+      else dispatch({ type: 'replaceClipMedia', clipId: clip.id, media: processed })
+      return true
+    },
+    [project.media, dispatch, toast],
+  )
+
+  const cleanVoice = useCallback(
+    async (clip: Clip, level: 'light' | 'medium' | 'strong') => {
+      const media = clip.mediaId ? project.media[clip.mediaId] : undefined
+      if (!media) return
+      toast.info('Limpando a voz…', { duration: 2500 })
+      try {
+        const r = await window.api.cleanAudio(media.path, clip.in, clip.duration * (clip.speed || 1), level)
+        if (applyProcessedAudio(clip, r, 'voz limpa')) toast.success('Ruído removido', { detail: media.kind === 'video' ? 'O áudio limpo foi para uma trilha de áudio.' : undefined })
+      } catch (err) {
+        toast.error('Não foi possível limpar a voz', { detail: errorText(err) })
+      }
+    },
+    [project.media, applyProcessedAudio, toast],
+  )
+
   // ---------- Batidas ----------
   const detectBeatsFor = useCallback(
     async (mediaId: string) => {
@@ -372,6 +412,14 @@ export function App() {
     }
     if (media?.kind === 'video' && media.hasAudio && !clip.audioDetached) items.push({ label: 'Separar áudio do vídeo', icon: Split, onClick: () => dispatch({ type: 'detachAudio', clipId: clip.id }) })
     if (audible) items.push({ label: 'Separar voz e instrumentos…', icon: Sparkles, onClick: () => setStemsClip(clip.id) })
+    if (audible) {
+      items.push({ label: 'Limpar voz (remover ruído)', icon: AudioWaveform, submenu: [
+        { label: 'Leve', onClick: () => void cleanVoice(clip, 'light') },
+        { label: 'Média', onClick: () => void cleanVoice(clip, 'medium') },
+        { label: 'Forte', onClick: () => void cleanVoice(clip, 'strong') },
+      ] })
+      items.push({ label: 'Plugin VST3…', icon: Plug, onClick: () => setVstClip(clip.id) })
+    }
     if (audible && media) items.push({ label: media.beats ? `Batidas: ${media.beats.bpm} BPM (detectar de novo)` : 'Detectar batidas', icon: Drum, onClick: () => detectBeatsFor(media.id) })
     if (visual) {
       items.push({ separator: true })
@@ -706,6 +754,7 @@ export function App() {
             <div className="tool-group">
               <IconButton icon={Type} label="Texto" shortcut="T" onClick={() => addText()} showLabel />
               <IconButton icon={Captions} label="Legendas" onClick={() => setDialog('captions')} showLabel />
+              <IconButton icon={Mic} label="Gravar" onClick={() => { setPlaying(false); setRecordOpen(true) }} showLabel />
             </div>
             <div className="titlebar-drag" />
             <button className="btn primary export-btn" onClick={exportVideo} data-tip="Ctrl+E">
@@ -769,6 +818,7 @@ export function App() {
               checkpoint={checkpoint}
               onSeek={seek}
               onDetectBeats={detectBeatsFor}
+              onAudioTool={(tool, clip) => (tool === 'vst' ? setVstClip(clip.id) : void cleanVoice(clip, tool))}
               onVideoTool={(tool, clip) => (tool === 'freeze' ? void freezeFrame(clip) : tool === 'reverse' ? void reverseClip(clip) : setBgClip(clip.id))}
               onSeparate={(id) => {
                 setPlaying(false)
@@ -888,6 +938,47 @@ export function App() {
             />
           )
         })()}
+
+      {vstClip &&
+        (() => {
+          const clip = project.clips.find((c) => c.id === vstClip)
+          const media = clip?.mediaId ? project.media[clip.mediaId] : undefined
+          if (!clip || !media) return null
+          return (
+            <VstDialog
+              clip={clip}
+              media={media}
+              onClose={() => setVstClip(null)}
+              onDone={(r, name) => {
+                setVstClip(null)
+                if (applyProcessedAudio(clip, r, name)) toast.success(`Processado pelo ${name}`)
+              }}
+            />
+          )
+        })()}
+
+      {recordOpen && (
+        <RecordDialog
+          at={time}
+          onPlay={(on) => {
+            if (on) setPlaying(true)
+            else setPlaying(false)
+          }}
+          onClose={() => setRecordOpen(false)}
+          onDone={(r, at) => {
+            setRecordOpen(false)
+            if (!r.ok) {
+              toast.error('Não foi possível salvar a gravação', { detail: r.error })
+              return
+            }
+            const media = { ...r.media, id: uid() }
+            dispatch({ type: 'addMedia', media: [media] })
+            const target = project.tracks.find((t) => t.id === selectedTrack && t.kind === 'audio')
+            dispatch({ type: 'addClip', mediaId: media.id, start: at, trackId: target?.id })
+            toast.success('Gravação adicionada', { detail: media.path })
+          }}
+        />
+      )}
 
       {showIntro && <Intro onDone={() => setShowIntro(false)} />}
 

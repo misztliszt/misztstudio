@@ -19,11 +19,16 @@
 
 ### Edição de vídeo
 - Timeline multitrilha com mover, aparar, dividir, snap (inclusive em batidas e marcadores) e zoom.
+- **Edição rápida**: excluir fechando o buraco (Shift+Del), timeline magnética, seleção com retângulo, congelar quadro, reverso e rampas de velocidade (Montagem, Herói, Bullet time…).
 - Copiar, recortar, colar e duplicar clipes; menu de contexto em clipes, trilhas e mídias.
+- **Transições**: dissolver, preto, flash, zoom, deslizar (4 direções) e girar.
+- **Efeitos**: desfoque, vinheta, granulado, tremor de câmera e espelhar.
+- **Remover fundo com IA** (MODNet na GPU), gerando vídeo com transparência.
 - **Transformar na prévia**: arraste para mover, cantos para escalar, alça para girar; corte por lado.
 - **Keyframes** de posição, escala, rotação e opacidade, com curvas suave, linear e segurar.
 - **Velocidade** de 0,25× a 4× (o tom da voz é preservado).
-- Textos com estilos prontos e animações; transições dissolver e preto.
+- Textos com estilos prontos e animações: pop, cair e quicar, máquina de escrever, palavra por palavra e karaokê.
+- **Legendas karaokê**: o Whisper marca o tempo de cada palavra e ela acende na hora certa.
 - Cor: brilho, contraste, saturação, matiz, sépia, filtros prontos e LUT `.cube`.
 - **Legendas automáticas** com Whisper rodando no computador.
 - **Importar de link** (YouTube e outros sites) com o yt-dlp, escolhendo qualidade e pasta.
@@ -38,6 +43,9 @@
 - **Ducking**: a música abaixa sozinha quando há voz.
 - **Detecção de batidas** (BPM) com ímã na timeline.
 - Automação de volume por pontos e fades.
+- **Limpar voz** (remoção de ruído leve, média ou forte).
+- **Gravar pelo microfone** com contagem regressiva, tocando a timeline junto.
+- **Plugins VST3** (ex.: MAutoPitch) com a interface do próprio plugin, via pedalboard.
 
 ### Exportação
 - Presets: YouTube 1080p e 4K, Reels/TikTok, arquivo mestre, rascunho, MP3 e WAV.
@@ -90,6 +98,9 @@ npm run dist
 | `electron/export.cjs` | Timeline → FFmpeg (vídeo, cor, animação, áudio, ducking, loudness) |
 | `electron/stems.cjs`, `separate.py` | Separação de faixas com Demucs |
 | `electron/downloader.cjs` | Importação por link com yt-dlp |
+| `electron/audiotools.cjs`, `vst.py` | Limpeza de voz e plugins VST3 (pedalboard) |
+| `src/fx.ts` | Transições e efeitos (mesmas fórmulas na exportação) |
+| `src/bgremove.worker.ts` | Máscaras de recorte com MODNet |
 | `src/engine.ts`, `src/audio.ts` | Prévia: composição no canvas e grafo Web Audio |
 | `src/dsp/` | Afinação/transposição e reverb, compartilhados entre prévia e exportação |
 | `src/anim.ts`, `src/color.ts`, `src/text.ts` | Mesmas fórmulas na prévia e na exportação |

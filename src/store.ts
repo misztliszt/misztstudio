@@ -179,7 +179,7 @@ export type Action =
   | { type: 'addClip'; mediaId: string; trackId?: string; start: number }
   | { type: 'addText'; start: number; duration?: number; trackId?: string; text?: Partial<TextStyle> }
   | { type: 'addTexts'; trackName: string; items: { start: number; duration: number; content: string; words?: TextStyle['words'] }[]; text: Partial<TextStyle> }
-  | { type: 'detachAudio'; clipId: string }
+  | { type: 'detachAudio'; clipId: string; media?: Media }
   | { type: 'addStems'; sourceClipId: string; items: { label: string; media: Media }[]; muteOriginal: boolean }
   | { type: 'updateClip'; id: string; patch: Partial<Clip> }
   | { type: 'setSpeed'; id: string; speed: number }
@@ -311,13 +311,14 @@ function reduceCore(p: Project, a: Action): Project {
       const m = source?.mediaId ? p.media[source.mediaId] : undefined
       if (!source || !m || m.kind !== 'video' || !m.hasAudio || source.audioDetached) return p
       const [next, trackId] = trackFor(p, 'audio', source.start, source.duration)
+      // Com `a.media` (áudio já processado do trecho usado), o clipe novo começa no início desse arquivo.
       const audio: Clip = {
         ...clipDefaults(),
         id: uid(),
-        mediaId: m.id,
+        mediaId: a.media ? a.media.id : m.id,
         trackId,
         start: source.start,
-        in: source.in,
+        in: a.media ? 0 : source.in,
         duration: source.duration,
         volume: source.volume,
         fadeIn: source.fadeIn,
@@ -327,6 +328,7 @@ function reduceCore(p: Project, a: Action): Project {
       }
       return {
         ...next,
+        media: a.media ? { ...next.media, [a.media.id]: a.media } : next.media,
         clips: [...next.clips.map((c) => (c.id === source.id ? { ...c, audioDetached: true, volume: 0, fadeIn: 0, fadeOut: 0, volumeKeys: [] } : c)), audio],
       }
     }

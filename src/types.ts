@@ -279,12 +279,21 @@ declare global {
       recentProjects(): Promise<RecentProject[]>
       removeRecent(path: string): Promise<void>
       showInFolder(path: string): Promise<void>
+      openMicSettings(): Promise<void>
       platform: string
       exportVideo(payload: ExportPayload): Promise<string | null>
       cancelExport(): Promise<void>
       onExportProgress(cb: (value: number) => void): () => void
       makeProxy(path: string): Promise<string>
       extractFrame(path: string, time: number): Promise<ProbeResult>
+      cleanAudio(path: string, inPoint: number, duration: number, level: 'light' | 'medium' | 'strong'): Promise<ProbeResult>
+      vstStatus(): Promise<{ installed: boolean; python: string | null }>
+      vstInstall(): Promise<{ installed: boolean; python: string | null }>
+      vstScan(): Promise<{ name: string; path: string; vendor: string }[]>
+      vstEditor(plugin: string, state?: string | null): Promise<{ state: string; name: string }>
+      vstApply(path: string, inPoint: number, duration: number, plugin: string, state?: string | null): Promise<ProbeResult>
+      onVstProgress(cb: (msg: { stage: string; line?: string }) => void): () => void
+      saveRecording(data: ArrayBuffer): Promise<ProbeResult>
       bgPrepare(path: string, inPoint: number, duration: number): Promise<{ id: string; url: string; width: number; height: number; frames: number; fps: number }>
       bgWriteMasks(id: string, data: ArrayBuffer): Promise<void>
       bgFinish(id: string, hasAudio: boolean): Promise<ProbeResult>
