@@ -236,6 +236,25 @@ export interface LinkInfo {
   webpage: string
 }
 
+/** Tela ou janela que pode ser gravada. */
+export interface CaptureSource {
+  id: string
+  name: string
+  kind: 'screen' | 'window'
+  thumbnail: string | null
+}
+
+/** Resultado da pesquisa do YouTube (via yt-dlp). */
+export interface SearchResult {
+  id: string
+  title: string
+  channel: string | null
+  duration: number
+  views: number | null
+  thumbnail: string
+  url: string
+}
+
 export interface RecentProject {
   path: string
   name: string
@@ -294,6 +313,15 @@ declare global {
       vstApply(path: string, inPoint: number, duration: number, plugin: string, state?: string | null): Promise<ProbeResult>
       onVstProgress(cb: (msg: { stage: string; line?: string }) => void): () => void
       saveRecording(data: ArrayBuffer): Promise<ProbeResult>
+      screenSources(): Promise<CaptureSource[]>
+      screenSelect(sourceId: string, systemAudio: boolean): Promise<void>
+      screenBegin(parts: { key: 'video' | 'system' | 'mic'; mime: string }[]): Promise<string>
+      screenChunk(id: string, key: string, data: ArrayBuffer): Promise<void>
+      screenFinish(id: string): Promise<{ dir: string; video?: ProbeResult; system?: ProbeResult; mic?: ProbeResult }>
+      screenDiscard(id: string): Promise<void>
+      screenHotkey(on: boolean): Promise<void>
+      screenMinimize(on: boolean): Promise<void>
+      onScreenStop(cb: () => void): () => void
       bgPrepare(path: string, inPoint: number, duration: number): Promise<{ id: string; url: string; width: number; height: number; frames: number; fps: number }>
       bgWriteMasks(id: string, data: ArrayBuffer): Promise<void>
       bgFinish(id: string, hasAudio: boolean): Promise<ProbeResult>
@@ -309,6 +337,7 @@ declare global {
       ytdlpInstall(): Promise<{ installed: boolean; version: string | null; outDir: string }>
       ytdlpUpdate(): Promise<{ message: string; installed: boolean; version: string | null }>
       ytdlpInfo(url: string): Promise<LinkInfo>
+      ytdlpSearch(query: string): Promise<SearchResult[]>
       ytdlpDownload(url: string, preset: 'best' | 'hd720' | 'max' | 'audio'): Promise<ProbeResult>
       ytdlpCancel(): Promise<void>
       /** Abre o seletor de pasta; devolve a pasta escolhida (ou a atual se cancelar). */

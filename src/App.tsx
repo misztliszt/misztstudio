@@ -34,6 +34,7 @@ import {
   AudioWaveform,
   Plug,
   Mic,
+  MonitorPlay,
 } from 'lucide-react'
 import type { Clip } from './types'
 import { defaultTransform } from './anim'
@@ -44,6 +45,7 @@ import { LinkImportDialog } from './components/LinkImportDialog'
 import { BgRemoveDialog } from './components/BgRemoveDialog'
 import { VstDialog } from './components/VstDialog'
 import { RecordDialog } from './components/RecordDialog'
+import { ScreenRecordDialog } from './components/ScreenRecordDialog'
 import { detectBeats } from './beats'
 import { getPeaks } from './waveform'
 import type { ExportOptions } from './types'
@@ -324,6 +326,7 @@ export function App() {
   // ---------- Áudio de estúdio ----------
   const [vstClip, setVstClip] = useState<string | null>(null)
   const [recordOpen, setRecordOpen] = useState(false)
+  const [screenOpen, setScreenOpen] = useState(false)
 
   /** Usa um áudio processado do trecho do clipe: em vídeo, separa o áudio; em áudio, troca a mídia. */
   const applyProcessedAudio = useCallback(
@@ -755,6 +758,7 @@ export function App() {
               <IconButton icon={Type} label="Texto" shortcut="T" onClick={() => addText()} showLabel />
               <IconButton icon={Captions} label="Legendas" onClick={() => setDialog('captions')} showLabel />
               <IconButton icon={Mic} label="Gravar" onClick={() => { setPlaying(false); setRecordOpen(true) }} showLabel />
+              <IconButton icon={MonitorPlay} label="Gravar tela" onClick={() => { setPlaying(false); setScreenOpen(true) }} />
             </div>
             <div className="titlebar-drag" />
             <button className="btn primary export-btn" onClick={exportVideo} data-tip="Ctrl+E">
@@ -976,6 +980,28 @@ export function App() {
             const target = project.tracks.find((t) => t.id === selectedTrack && t.kind === 'audio')
             dispatch({ type: 'addClip', mediaId: media.id, start: at, trackId: target?.id })
             toast.success('Gravação adicionada', { detail: media.path })
+          }}
+        />
+      )}
+
+      {screenOpen && (
+        <ScreenRecordDialog
+          at={time}
+          onClose={() => setScreenOpen(false)}
+          onDone={(r, at) => {
+            setScreenOpen(false)
+            const parts = [r.video, r.system, r.mic]
+            const failed = parts.find((x) => x && !x.ok)
+            if (failed && !failed.ok) toast.error('Parte da gravação não pôde ser salva', { detail: failed.error })
+            const ok = (x?: ProbeResult) => (x?.ok ? { ...x.media, id: uid() } : null)
+            const video = ok(r.video)
+            const audio = [
+              { label: 'Áudio do sistema', media: ok(r.system) },
+              { label: 'Microfone', media: ok(r.mic) },
+            ].filter((a): a is { label: string; media: Media } => !!a.media)
+            if (!video && !audio.length) return
+            dispatch({ type: 'addRecording', start: at, video, audio })
+            toast.success('Gravação de tela adicionada', { detail: r.dir, action: { label: 'Abrir pasta', run: () => window.api.showInFolder((video ?? audio[0].media).path) } })
           }}
         />
       )}

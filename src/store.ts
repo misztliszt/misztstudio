@@ -181,6 +181,7 @@ export type Action =
   | { type: 'addTexts'; trackName: string; items: { start: number; duration: number; content: string; words?: TextStyle['words'] }[]; text: Partial<TextStyle> }
   | { type: 'detachAudio'; clipId: string; media?: Media }
   | { type: 'addStems'; sourceClipId: string; items: { label: string; media: Media }[]; muteOriginal: boolean }
+  | { type: 'addRecording'; start: number; video: Media | null; audio: { label: string; media: Media }[] }
   | { type: 'updateClip'; id: string; patch: Partial<Clip> }
   | { type: 'setSpeed'; id: string; speed: number }
   | { type: 'toggleMarker'; t: number }
@@ -353,6 +354,25 @@ function reduceCore(p: Project, a: Action): Project {
         tracks: [...p.tracks.slice(0, at), ...tracks, ...p.tracks.slice(at)],
         clips: [...p.clips.map((c) => (c.id === source.id && a.muteOriginal ? { ...c, volume: 0 } : c)), ...clips],
       }
+    }
+    case 'addRecording': {
+      // Gravação de tela: o vídeo numa trilha livre e cada áudio (sistema, microfone) na sua própria trilha.
+      let next: Project = { ...p, media: { ...p.media } }
+      const clips: Clip[] = []
+      if (a.video) {
+        next.media[a.video.id] = a.video
+        const [withTrack, trackId] = trackFor(next, 'video', a.start, a.video.duration)
+        next = withTrack
+        clips.push({ ...clipDefaults(), id: uid(), mediaId: a.video.id, trackId, start: a.start, in: 0, duration: a.video.duration })
+      }
+      const tracks: Track[] = []
+      for (const { label, media: m } of a.audio) {
+        next.media[m.id] = m
+        const track = makeTrack('audio', label)
+        tracks.push(track)
+        clips.push({ ...clipDefaults(), id: uid(), mediaId: m.id, trackId: track.id, start: a.start, in: 0, duration: m.duration })
+      }
+      return { ...next, tracks: [...next.tracks, ...tracks], clips: [...next.clips, ...clips] }
     }
     case 'updateClip': {
       const clip = p.clips.find((c) => c.id === a.id)

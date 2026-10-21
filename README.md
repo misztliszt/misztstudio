@@ -31,7 +31,8 @@
 - **Legendas karaokê**: o Whisper marca o tempo de cada palavra e ela acende na hora certa.
 - Cor: brilho, contraste, saturação, matiz, sépia, filtros prontos e LUT `.cube`.
 - **Legendas automáticas** com Whisper rodando no computador.
-- **Importar de link** (YouTube e outros sites) com o yt-dlp, escolhendo qualidade e pasta.
+- **Pesquisar no YouTube** dentro do app ou **importar de um link** (YouTube e outros sites) com o yt-dlp, escolhendo qualidade e pasta.
+- **Gravar a tela** (tela inteira ou janela) com o áudio do sistema e o microfone em trilhas separadas, como no OBS.
 - Proxies automáticos para vídeos pesados (HEVC, ProRes, 4K).
 
 ### Áudio

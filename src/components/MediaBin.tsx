@@ -29,7 +29,7 @@ export function MediaBin({ media, proxyProgress, onImport, onAdd, onRemove, onPr
       <header className="panel-header">
         <h2>Mídia</h2>
         <div className="bin-actions">
-          <button className="btn small" onClick={onImportLink} data-tip="Baixar de um link (YouTube…)" data-tip-pos="bottom">
+          <button className="btn small" onClick={onImportLink} data-tip="Pesquisar no YouTube ou baixar de um link" data-tip-pos="bottom">
             <Link2 size={14} strokeWidth={2.2} /> Link
           </button>
           <button className="btn primary small" onClick={onImport} data-tip="Ctrl+I" data-tip-pos="bottom">
@@ -52,7 +52,7 @@ export function MediaBin({ media, proxyProgress, onImport, onAdd, onRemove, onPr
               onImportLink()
             }}
           >
-            <Link2 size={13} /> ou importe de um link do YouTube
+            <Link2 size={13} /> ou importe do YouTube
           </span>
         </button>
       ) : (

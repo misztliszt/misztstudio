@@ -15,3 +15,4 @@ Próximos passos combinados para o Miszt Studio. Marque com `[x]` ao concluir.
 - [ ] **Biblioteca de músicas e efeitos sonoros livres** (Creative Commons), dentro do app.
 - [ ] **Exportar em segundo plano**, com fila, para continuar editando enquanto renderiza.
 - [ ] **Histórico de desfazer visual**: uma lista de ações para voltar a qualquer ponto.
+- [ ] **Microfone ao vivo** (karaokê no VRChat, Discord, lives): escolher o microfone, aplicar em tempo real a afinação do app (tom, escala, velocidade), além de EQ, compressor e reverb leve, e mandar a voz corrigida para o VB-CABLE, que o jogo usa como microfone ("CABLE Output"). Inclui botão de tom rápido para trocar de música, monitoramento nos fones e controle de latência. Usa a afinação própria do app; o MAutoPitch via pedalboard não funciona ao vivo.

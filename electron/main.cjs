@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, protocol, shell, session } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog, protocol, shell, session, desktopCapturer, globalShortcut } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 const os = require('node:os')
@@ -405,6 +405,91 @@ app.whenReady().then(() => {
     return probeOne(wav)
   })
 
+  // ---------- Gravação de tela (vídeo, áudio do sistema e microfone em arquivos separados) ----------
+  // A interface escolhe a fonte; o getDisplayMedia seguinte recebe essa fonte (e o áudio do sistema por loopback).
+  let pendingCapture = null
+  session.defaultSession.setDisplayMediaRequestHandler(async (_req, callback) => {
+    const sel = pendingCapture
+    pendingCapture = null
+    const source = sel && (await desktopCapturer.getSources({ types: ['screen', 'window'] })).find((s) => s.id === sel.sourceId)
+    if (!source) return callback({})
+    callback(sel.systemAudio && process.platform === 'win32' ? { video: source, audio: 'loopback' } : { video: source })
+  })
+  ipcMain.handle('screen:sources', async () => {
+    const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 180 } })
+    return sources
+      .filter((s) => !mainWindow || s.id !== mainWindow.getMediaSourceId())
+      .map((s) => ({ id: s.id, name: s.name, kind: s.id.startsWith('screen:') ? 'screen' : 'window', thumbnail: s.thumbnail.isEmpty() ? null : s.thumbnail.toDataURL() }))
+  })
+  ipcMain.handle('screen:select', (_e, sourceId, systemAudio) => {
+    pendingCapture = { sourceId, systemAudio }
+  })
+  ipcMain.handle('screen:hotkey', (_e, on) => {
+    globalShortcut.unregister('CommandOrControl+Shift+F9')
+    if (on) globalShortcut.register('CommandOrControl+Shift+F9', () => mainWindow && mainWindow.webContents.send('screen:stop'))
+  })
+  ipcMain.handle('screen:minimize', (_e, on) => {
+    if (!mainWindow) return
+    if (on) mainWindow.minimize()
+    else {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.focus()
+    }
+  })
+
+  // Os pedaços chegam enquanto grava e vão direto para o disco (gravações longas não ficam na memória).
+  const screenJobs = new Map()
+  ipcMain.handle('screen:begin', (_e, parts) => {
+    const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19)
+    const dir = path.join(downloader.outDir, 'Gravações de tela', `Tela ${stamp}`)
+    fs.mkdirSync(dir, { recursive: true })
+    const id = crypto.randomUUID()
+    const files = {}
+    for (const { key, mime } of parts) {
+      const raw = path.join(dir, `.${key}.${/mp4/.test(mime) ? 'mp4' : 'webm'}`)
+      files[key] = { raw, mime, stream: fs.createWriteStream(raw) }
+    }
+    screenJobs.set(id, { dir, files })
+    return id
+  })
+  ipcMain.handle('screen:chunk', (_e, id, key, data) => {
+    const f = screenJobs.get(id)?.files[key]
+    if (!f) return
+    return new Promise((resolve, reject) => f.stream.write(Buffer.from(data), (err) => (err ? reject(err) : resolve())))
+  })
+  const closeJob = (job) => Promise.all(Object.values(job.files).map((f) => new Promise((resolve) => f.stream.end(resolve))))
+  ipcMain.handle('screen:discard', async (_e, id) => {
+    const job = screenJobs.get(id)
+    if (!job) return
+    screenJobs.delete(id)
+    await closeJob(job)
+    fs.rmSync(job.dir, { recursive: true, force: true })
+  })
+  ipcMain.handle('screen:finish', async (_e, id) => {
+    const job = screenJobs.get(id)
+    if (!job) throw new Error('Gravação não encontrada')
+    screenJobs.delete(id)
+    await closeJob(job)
+    const out = {}
+    const names = { system: 'Áudio do sistema', mic: 'Microfone' }
+    for (const [key, f] of Object.entries(job.files)) {
+      if (!fs.existsSync(f.raw) || fs.statSync(f.raw).size === 0) continue
+      let target
+      if (key === 'video') {
+        // H.264 vira MP4 sem recompressão (toca leve na prévia); VP8/VP9 ficam em WebM, só com a duração corrigida.
+        const h264 = /avc1|h264/i.test(f.mime)
+        target = path.join(job.dir, h264 ? 'Tela.mp4' : 'Tela.webm')
+        await run(FFMPEG, ['-y', '-hide_banner', '-loglevel', 'error', '-i', f.raw, '-map', '0:v:0', '-c', 'copy', '-avoid_negative_ts', 'make_zero', ...(h264 ? ['-movflags', '+faststart'] : []), target])
+      } else {
+        target = path.join(job.dir, `${names[key] || key}.wav`)
+        await run(FFMPEG, ['-y', '-hide_banner', '-loglevel', 'error', '-i', f.raw, '-ac', '2', '-ar', '48000', '-c:a', 'pcm_s24le', target])
+      }
+      fs.rmSync(f.raw, { force: true })
+      out[key] = await probeOne(target)
+    }
+    return { dir: job.dir, ...out }
+  })
+
   // ---------- Remoção de fundo (máscaras calculadas pela IA na interface) ----------
   const bgJobs = new Map()
   ipcMain.handle('bg:prepare', async (_e, filePath, inPoint, duration) => {
@@ -554,6 +639,7 @@ app.whenReady().then(() => {
   ipcMain.handle('ytdlp:install', () => downloader.install(sendDl))
   ipcMain.handle('ytdlp:update', () => downloader.update())
   ipcMain.handle('ytdlp:info', (_e, url) => downloader.info(url))
+  ipcMain.handle('ytdlp:search', (_e, query) => downloader.search(query))
   ipcMain.handle('ytdlp:cancel', () => downloader.cancel())
   ipcMain.handle('ytdlp:download', async (_e, url, preset) => {
     const file = await downloader.download(url, preset, sendDl)
@@ -594,6 +680,8 @@ async function probeMany(paths) {
   }
   return results
 }
+
+app.on('will-quit', () => globalShortcut.unregisterAll())
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()

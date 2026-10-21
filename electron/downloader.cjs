@@ -112,6 +112,26 @@ class Downloader {
     }
   }
 
+  /** Pesquisa no YouTube (lista rápida, sem abrir cada vídeo). */
+  async search(query, count = 16) {
+    const json = await this.run([`ytsearch${count}:${query}`, '--flat-playlist', '-J', '--no-warnings'], { timeout: 60000 })
+    return (JSON.parse(json).entries || [])
+      .filter((e) => e && e.id && e.live_status !== 'is_live')
+      .map((e) => {
+        const thumbs = (e.thumbnails || []).filter((t) => t.url)
+        const thumb = thumbs.find((t) => t.width >= 320) || thumbs[thumbs.length - 1]
+        return {
+          id: e.id,
+          title: e.title || e.id,
+          channel: e.channel || e.uploader || null,
+          duration: e.duration || 0,
+          views: e.view_count || null,
+          thumbnail: thumb ? thumb.url : `https://i.ytimg.com/vi/${e.id}/mqdefault.jpg`,
+          url: e.url || `https://www.youtube.com/watch?v=${e.id}`,
+        }
+      })
+  }
+
   /** Baixa o vídeo; devolve o caminho do arquivo final. */
   async download(url, preset, onProgress) {
     fs.mkdirSync(this.outDir, { recursive: true })
