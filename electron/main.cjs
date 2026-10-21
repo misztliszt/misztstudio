@@ -11,6 +11,8 @@ const { Downloader } = require('./downloader.cjs')
 const { AudioTools } = require('./audiotools.cjs')
 const { ExportQueue } = require('./exportqueue.cjs')
 const { setupUpdater } = require('./updater.cjs')
+const { detectKeyFile } = require('./analysis.cjs')
+const { Library } = require('./library.cjs')
 
 const isDev = process.argv.includes('--dev')
 
@@ -260,6 +262,11 @@ function createWindow() {
       backgroundThrottling: false,
     },
   })
+  // Links externos (ex.: textos das licenças Creative Commons) abrem no navegador, nunca dentro do app.
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https:\/\/(creativecommons\.org|www\.jamendo\.com|freesound\.org|ccmixter\.org|wikimedia\.org|commons\.wikimedia\.org|openverse\.org)\//.test(url)) void shell.openExternal(url)
+    return { action: 'deny' }
+  })
   // Exportações na fila: pergunta antes de fechar.
   mainWindow.on('close', (e) => {
     if (!exportQueue || !exportQueue.active) return
@@ -297,6 +304,8 @@ app.whenReady().then(() => {
     return { filePath, json }
   })
   ipcMain.handle('shell:show', (_e, filePath) => shell.showItemInFolder(filePath))
+  // Só abre o site oficial do VB-CABLE (cabo de áudio virtual usado no microfone ao vivo).
+  ipcMain.handle('shell:vbcable', () => shell.openExternal('https://vb-audio.com/Cable/'))
   // Abre a tela de privacidade do microfone do Windows (o usuário decide lá).
   ipcMain.handle('shell:micSettings', () => shell.openExternal(process.platform === 'win32' ? 'ms-settings:privacy-microphone' : 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone'))
 
@@ -370,6 +379,7 @@ app.whenReady().then(() => {
   ipcMain.handle('export:list', () => exportQueue.list())
 
   ipcMain.handle('media:proxy', (_e, filePath) => makeProxy(filePath))
+  ipcMain.handle('audio:key', (_e, filePath, inPoint, duration) => detectKeyFile(FFMPEG, filePath, inPoint, duration))
 
   // ---------- Áudio de estúdio ----------
   const audioTools = new AudioTools(app.getPath('userData'), FFMPEG)
@@ -640,6 +650,13 @@ app.whenReady().then(() => {
   ipcMain.handle('update:check', () => updater.check(true))
   ipcMain.handle('update:install', () => updater.install())
 
+  const library = new Library(`MisztStudio/${app.getVersion()}`)
+  ipcMain.handle('library:search', (_e, opts) => library.search(opts))
+  ipcMain.handle('library:cancel', () => library.cancel())
+  ipcMain.handle('library:download', async (_e, item) => {
+    const file = await library.download(item, path.join(downloader.outDir, 'Biblioteca CC'), (p) => mainWindow && mainWindow.webContents.send('library:progress', { id: item.id, progress: p }))
+    return probeOne(file)
+  })
   const sendDl = (msg) => mainWindow && mainWindow.webContents.send('ytdlp:progress', msg)
   ipcMain.handle('ytdlp:status', () => downloader.status())
   ipcMain.handle('ytdlp:install', () => downloader.install(sendDl))

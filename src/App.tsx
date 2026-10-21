@@ -37,6 +37,7 @@ import {
   MonitorPlay,
   History as HistoryIcon,
   Settings,
+  Radio,
 } from 'lucide-react'
 import type { Clip } from './types'
 import { defaultTransform } from './anim'
@@ -50,6 +51,9 @@ import { RecordDialog } from './components/RecordDialog'
 import { ExportQueue } from './components/ExportQueue'
 import { HistoryPanel } from './components/HistoryPanel'
 import { PreferencesDialog } from './components/PreferencesDialog'
+import { LiveMicDialog } from './components/LiveMicDialog'
+import { LibraryDialog } from './components/LibraryDialog'
+import { LiveVoice } from './live'
 import { buildKeymap, comboOf, shortcutLabel, type ShortcutId } from './shortcuts'
 import { ScreenRecordDialog } from './components/ScreenRecordDialog'
 import { detectBeats } from './beats'
@@ -94,6 +98,7 @@ export function App() {
   const [dialog, setDialog] = useState<'captions' | null>(null)
   const [stemsClip, setStemsClip] = useState<string | null>(null)
   const [linkOpen, setLinkOpen] = useState(false)
+  const [libraryOpen, setLibraryOpen] = useState(false)
   const [bgClip, setBgClip] = useState<string | null>(null)
   const [filePath, setFilePath] = useState<string | null>(null)
   const [savedProject, setSavedProject] = useState<Project | null>(null)
@@ -103,6 +108,10 @@ export function App() {
   const [prefsOpen, setPrefsOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [update, setUpdate] = useState<UpdateStatus | null>(null)
+  const live = useMemo(() => new LiveVoice(), [])
+  const [liveOpen, setLiveOpen] = useState(false)
+  const [liveOn, setLiveOn] = useState(false)
+  useEffect(() => live.subscribe(() => setLiveOn(live.running)), [live])
   const shortcuts = settings?.shortcuts
   const key = useCallback((id: ShortcutId) => shortcutLabel(id, shortcuts), [shortcuts])
 
@@ -857,6 +866,7 @@ export function App() {
               <IconButton icon={Captions} label="Legendas" onClick={() => setDialog('captions')} showLabel />
               <IconButton icon={Mic} label="Gravar" onClick={() => { setPlaying(false); setRecordOpen(true) }} showLabel />
               <IconButton icon={MonitorPlay} label="Gravar tela" onClick={() => { setPlaying(false); setScreenOpen(true) }} />
+              <IconButton icon={Radio} label="Microfone ao vivo (VRChat, Discord, lives)" onClick={() => setLiveOpen(true)} active={liveOn} />
             </div>
             <div className="titlebar-drag" />
             <button className="btn primary export-btn" onClick={exportVideo} data-tip={key('export')}>
@@ -865,6 +875,12 @@ export function App() {
           </>
         )}
         {screen !== 'editor' && <div className="titlebar-drag" />}
+        {liveOn && (
+          <button className="live-pill" onClick={() => setLiveOpen(true)} data-tip="Microfone ao vivo ligado" data-tip-pos="bottom">
+            <span className="rec-dot" /> AO VIVO
+          </button>
+        )}
+        {screen !== 'editor' && <IconButton icon={Radio} label="Microfone ao vivo" onClick={() => setLiveOpen(true)} />}
         {screen !== 'editor' && <IconButton icon={Settings} label="Preferências" onClick={() => setPrefsOpen(true)} />}
         {isWin && <div className="window-controls-space" />}
       </header>
@@ -897,6 +913,7 @@ export function App() {
               onProxy={(mediaId) => requestProxy(project.media[mediaId])}
               onContextMenu={openMediaMenu}
               onImportLink={() => setLinkOpen(true)}
+              onLibrary={() => setLibraryOpen(true)}
             />
             <Preview
               engine={engine}
@@ -1120,6 +1137,27 @@ export function App() {
           onClose={() => setHistoryOpen(false)}
         />
       )}
+      {libraryOpen && (
+        <LibraryDialog
+          media={Object.values(project.media)}
+          onClose={() => setLibraryOpen(false)}
+          onAdd={(r, credit) => {
+            if (!r.ok) {
+              toast.error('Não foi possível importar', { detail: r.error })
+              return
+            }
+            const existing = Object.values(project.media).find((m) => m.path === r.media.path)
+            if (existing) {
+              toast.info('Já está no projeto', { detail: existing.name })
+              return
+            }
+            const m = { ...r.media, id: uid(), credit }
+            dispatch({ type: 'addMedia', media: [m] })
+            toast.success('Adicionado à mídia', { detail: credit.needsCredit ? `${m.name} · lembre de dar o crédito (aba Créditos)` : m.name })
+          }}
+        />
+      )}
+      {liveOpen && <LiveMicDialog live={live} onClose={() => setLiveOpen(false)} />}
       {prefsOpen && settings && <PreferencesDialog settings={settings} update={update} onChange={(p) => void changeSettings(p)} onClose={() => setPrefsOpen(false)} />}
     </div>
   )

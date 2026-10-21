@@ -31,3 +31,8 @@ export function midiToName(midi: number) {
 }
 
 export const hzToMidi = (hz: number) => 69 + 12 * Math.log2(hz / 440)
+
+const PT_NAMES = ['Dó', 'Dó♯', 'Ré', 'Mi♭', 'Mi', 'Fá', 'Fá♯', 'Sol', 'Lá♭', 'Lá', 'Si♭', 'Si']
+
+/** Nome do tom em português, ex.: "Fá menor". */
+export const keyName = (key: number, mode: Mode) => `${PT_NAMES[((key % 12) + 12) % 12]} ${mode === 'minor' ? 'menor' : 'maior'}`

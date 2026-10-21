@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
-import { AudioLines, Film, Gauge, Music, Smartphone, Sparkles, Upload, Youtube, Zap } from 'lucide-react'
+import { AudioLines, Check, Copy, Film, Gauge, Music, Smartphone, Sparkles, Upload, Youtube, Zap } from 'lucide-react'
+import { creditsText } from './LibraryDialog'
 import type { ExportFormat, ExportOptions, Project } from '../types'
 import { formatTime } from '../format'
 import { Select, Toggle } from './controls'
@@ -148,6 +149,8 @@ export function ExportDialog({ project, duration, name, onExport, onClose }: { p
           </span>
         </div>
 
+        <CreditsNotice project={project} />
+
         <div className="modal-actions">
           <button className="btn" onClick={onClose}>
             Cancelar
@@ -157,6 +160,31 @@ export function ExportDialog({ project, duration, name, onExport, onClose }: { p
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+/** Lembra de dar crédito às mídias CC usadas no projeto. */
+function CreditsNotice({ project }: { project: Project }) {
+  const [copied, setCopied] = useState(false)
+  const text = creditsText(Object.values(project.media).filter((m) => project.clips.some((c) => c.mediaId === m.id)))
+  if (!text) return null
+  const count = text.split('\n').length - 1
+  return (
+    <div className="export-credits">
+      <Music size={15} />
+      <span>
+        {count === 1 ? '1 som da biblioteca exige' : `${count} sons da biblioteca exigem`} crédito ao autor na descrição do vídeo.
+      </span>
+      <button
+        className="btn small"
+        onClick={() => {
+          void navigator.clipboard.writeText(text)
+          setCopied(true)
+        }}
+      >
+        {copied ? <Check size={13} /> : <Copy size={13} />} {copied ? 'Copiado' : 'Copiar créditos'}
+      </button>
     </div>
   )
 }

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Film, Image as ImageIcon, Link2, Music, Plus, Search, Trash2, Upload, Zap } from 'lucide-react'
+import { Film, Image as ImageIcon, Library, Link2, Music, Plus, Search, Trash2, Upload, Zap } from 'lucide-react'
 import type { Media } from '../types'
 import { formatTime } from '../format'
 
@@ -12,12 +12,13 @@ interface Props {
   onProxy: (mediaId: string) => void
   onContextMenu: (e: React.MouseEvent, media: Media) => void
   onImportLink: () => void
+  onLibrary: () => void
 }
 
 const KIND_ICON = { video: Film, audio: Music, image: ImageIcon }
 type Filter = 'all' | 'video' | 'audio' | 'image'
 
-export function MediaBin({ media, proxyProgress, onImport, onAdd, onRemove, onProxy, onContextMenu, onImportLink }: Props) {
+export function MediaBin({ media, proxyProgress, onImport, onAdd, onRemove, onProxy, onContextMenu, onImportLink, onLibrary }: Props) {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<Filter>('all')
   const visible = media.filter((m) => (filter === 'all' || m.kind === filter) && m.name.toLowerCase().includes(query.toLowerCase()))
@@ -29,6 +30,9 @@ export function MediaBin({ media, proxyProgress, onImport, onAdd, onRemove, onPr
       <header className="panel-header">
         <h2>Mídia</h2>
         <div className="bin-actions">
+          <button className="btn small" onClick={onLibrary} data-tip="Músicas e efeitos sonoros livres (CC)" data-tip-pos="bottom" aria-label="Biblioteca livre">
+            <Library size={14} strokeWidth={2.2} />
+          </button>
           <button className="btn small" onClick={onImportLink} data-tip="Pesquisar no YouTube ou baixar de um link" data-tip-pos="bottom">
             <Link2 size={14} strokeWidth={2.2} /> Link
           </button>
@@ -53,6 +57,16 @@ export function MediaBin({ media, proxyProgress, onImport, onAdd, onRemove, onPr
             }}
           >
             <Link2 size={13} /> ou importe do YouTube
+          </span>
+          <span
+            className="dropzone-link"
+            role="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              onLibrary()
+            }}
+          >
+            <Library size={13} /> ou use músicas e efeitos livres
           </span>
         </button>
       ) : (

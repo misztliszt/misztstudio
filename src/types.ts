@@ -21,6 +21,52 @@ export interface Media {
   alpha?: boolean
   /** Grade de batidas detectada (sob demanda). */
   beats?: { bpm: number; offset: number } | null
+  /** Tom detectado (sob demanda ou importado de uma biblioteca de DJ). */
+  key?: MusicalKey | null
+  /** Créditos de mídias com licença Creative Commons (biblioteca do app). */
+  credit?: MediaCredit | null
+}
+
+export interface MediaCredit {
+  title: string
+  creator: string | null
+  license: string
+  licenseUrl: string | null
+  source: string | null
+  landing: string | null
+  attribution: string | null
+  needsCredit: boolean
+}
+
+export interface LibraryItem {
+  id: string
+  title: string
+  creator: string | null
+  license: string
+  licenseName: string
+  licenseUrl: string | null
+  attribution: string | null
+  landing: string | null
+  source: string | null
+  url: string
+  ext: string
+  duration: number
+  thumbnail: string | null
+  category: string | null
+  genres: string[]
+  needsCredit: boolean
+  shareAlike: boolean
+}
+
+export interface MusicalKey {
+  /** Tônica: 0 = Dó … 11 = Si. */
+  key: number
+  mode: 'major' | 'minor'
+  /** Roda Camelot, ex.: "4A". */
+  camelot: string
+  confidence: number
+  /** Relativa maior/menor quando ficou muito perto (mesmas notas). */
+  alternative?: { key: number; mode: 'major' | 'minor'; camelot: string } | null
 }
 
 export type ScaleName = 'chromatic' | 'major' | 'minor' | 'pentatonicMajor' | 'pentatonicMinor' | 'blues'
@@ -336,6 +382,7 @@ declare global {
       removeRecent(path: string): Promise<void>
       showInFolder(path: string): Promise<void>
       openMicSettings(): Promise<void>
+      openVbCable(): Promise<void>
       platform: string
       /** Abre o diálogo de salvar e põe a exportação na fila; null se o usuário cancelar. */
       exportVideo(payload: ExportPayload): Promise<{ id: string; outPath: string } | null>
@@ -349,6 +396,7 @@ declare global {
       checkUpdate(): Promise<UpdateStatus>
       installUpdate(): Promise<void>
       onUpdateStatus(cb: (status: UpdateStatus) => void): () => void
+      detectKey(path: string, inPoint?: number, duration?: number): Promise<MusicalKey | null>
       makeProxy(path: string): Promise<string>
       extractFrame(path: string, time: number): Promise<ProbeResult>
       cleanAudio(path: string, inPoint: number, duration: number, level: 'light' | 'medium' | 'strong'): Promise<ProbeResult>
@@ -384,6 +432,10 @@ declare global {
       ytdlpUpdate(): Promise<{ message: string; installed: boolean; version: string | null }>
       ytdlpInfo(url: string): Promise<LinkInfo>
       ytdlpSearch(query: string): Promise<SearchResult[]>
+      librarySearch(opts: { q: string; category?: 'music' | 'sound_effect' | ''; commercial?: boolean; page?: number }): Promise<{ total: number; pages: number; items: LibraryItem[] }>
+      libraryDownload(item: LibraryItem): Promise<ProbeResult>
+      libraryCancel(): Promise<void>
+      onLibraryProgress(cb: (msg: { id: string; progress: number }) => void): () => void
       ytdlpDownload(url: string, preset: 'best' | 'hd720' | 'max' | 'audio'): Promise<ProbeResult>
       ytdlpCancel(): Promise<void>
       /** Abre o seletor de pasta; devolve a pasta escolhida (ou a atual se cancelar). */

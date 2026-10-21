@@ -31,12 +31,12 @@ import type { Action } from '../store'
 import { defaultColor, defaultEffects, maxClipDuration } from '../store'
 import { TRANSITION_OPTIONS } from '../fx'
 import { SpeedSection, TransformSection } from './TransformSection'
-import type { Clip, ColorAdjust, Project, ScaleName, TextStyle, Track, TrackFx, Transition, TransitionType, VideoEffects } from '../types'
+import type { Clip, ColorAdjust, Media, Project, ScaleName, TextStyle, Track, TrackFx, Transition, TransitionType, VideoEffects } from '../types'
 import type { PlaybackEngine } from '../engine'
 import { clipGainAt } from '../audio'
 import { COLOR_PRESETS } from '../color'
 import { FONTS, TEXT_ANIMATIONS, TEXT_PRESETS } from '../text'
-import { KEY_NAMES, SCALE_NAMES, semitonesBetween, type Mode } from '../music'
+import { KEY_NAMES, SCALE_NAMES, keyName, semitonesBetween, type Mode } from '../music'
 import { formatTime } from '../format'
 import { NumberField, Section, Segmented, Select, Slider, Toggle } from './controls'
 import { PitchGraph } from './PitchGraph'
@@ -215,6 +215,7 @@ function ClipInspector({ project, clip, time, dispatch, checkpoint, onSeparate, 
                     <Drum size={15} /> {media?.beats ? `Batidas: ${media.beats.bpm} BPM · detectar de novo` : 'Detectar batidas (ímã na timeline)'}
                   </button>
                 </Section>
+                {media && <KeySection project={project} clip={clip} media={media} dispatch={dispatch} />}
                 <Section title="Volume" icon={Gauge}>
                   <Slider label="Volume" value={clip.volume} min={0} max={2} format={pct} onStart={checkpoint} onChange={(v) => set({ volume: v }, true)} onReset={() => set({ volume: 1 })} />
                   <div className="field-grid">
@@ -678,5 +679,61 @@ function ProjectInspector({ project, dispatch }: Props) {
         </Section>
       </div>
     </>
+  )
+}
+
+/** Tom da música: detecta e aplica na afinação automática da trilha. */
+function KeySection({ project, clip, media, dispatch }: { project: Project; clip: Clip; media: Media; dispatch: Props['dispatch'] }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const track = project.tracks.find((t) => t.id === clip.trackId)
+  const k = media.key
+  const detect = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const r = await window.api.detectKey(media.path, clip.in, clip.duration * (clip.speed || 1))
+      if (!r) setError('Não deu para identificar o tom (trecho sem notas ou só percussão).')
+      dispatch({ type: 'updateMedia', id: media.id, patch: { key: r } })
+    } catch (err) {
+      setError(String(err instanceof Error ? err.message : err))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const apply = (key: number, mode: 'major' | 'minor') => {
+    if (!track) return
+    dispatch({ type: 'updateTrack', id: track.id, patch: { fx: { ...track.fx, autotune: { ...track.fx.autotune, enabled: true, key, scale: mode } } } })
+  }
+  return (
+    <Section title="Tom da música" icon={Music2}>
+      {k && (
+        <div className="key-result">
+          <span className="key-badge">{k.camelot}</span>
+          <div>
+            <strong>{keyName(k.key, k.mode)}</strong>
+            <span className="dim">
+              Confiança {Math.round(k.confidence * 100)}%{k.alternative ? ` · ou ${keyName(k.alternative.key, k.alternative.mode)} (${k.alternative.camelot}), a relativa` : ''}
+            </span>
+          </div>
+        </div>
+      )}
+      {k && track && (
+        <div className="key-actions">
+          <button className="btn small" onClick={() => apply(k.key, k.mode)}>
+            Usar na afinação da trilha
+          </button>
+          {k.alternative && (
+            <button className="btn ghost small" onClick={() => apply(k.alternative!.key, k.alternative!.mode)}>
+              Usar {keyName(k.alternative.key, k.alternative.mode)}
+            </button>
+          )}
+        </div>
+      )}
+      <button className="btn action-row" onClick={() => void detect()} disabled={busy}>
+        <Music2 size={15} /> {busy ? 'Analisando…' : k ? 'Detectar de novo' : 'Detectar o tom'}
+      </button>
+      {error && <p className="error">{error}</p>}
+    </Section>
   )
 }
