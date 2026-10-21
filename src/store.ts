@@ -556,7 +556,7 @@ function reduceCore(p: Project, a: Action): Project {
   }
 }
 
-interface History {
+export interface History {
   past: Project[]
   present: Project
   future: Project[]
@@ -566,7 +566,7 @@ type HistoryAction = { type: 'do'; action: Action; merge?: boolean } | { type: '
 
 const LIMIT = 200
 
-function historyReducer(h: History, a: HistoryAction): History {
+export function historyReducer(h: History, a: HistoryAction): History {
   switch (a.type) {
     case 'undo':
       if (!h.past.length) return h

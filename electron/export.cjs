@@ -306,11 +306,12 @@ async function prepareExport(payload, outPath, { workDir, runFfmpeg }) {
       const kfScale = animExpr(kf.scale, tr.scale, local)
       const scaleE = [kfScale, ...transScale].join('*')
       const animatedScale = !!(kf.scale && kf.scale.length) || transScale.length > 0
-      if (animatedScale) {
-        chain.push(`scale=w='max(2,trunc(${n(bw)}*(${scaleE})/2)*2)':h='max(2,trunc(${n(bh)}*(${scaleE})/2)*2)':eval=frame`)
-      } else {
-        chain.push(`scale=${even(bw * tr.scale)}:${even(bh * tr.scale)}`)
-      }
+      // Cor e efeitos vêm antes da escala animada: filtros como lutrgb e hflip derrubam o FFmpeg
+      // (corrupção de memória) quando o tamanho do quadro muda a cada quadro.
+      // Com escala animada, a base fica no maior tamanho usado (sem perder nitidez ao ampliar).
+      const maxS = Math.max(tr.scale, ...(kf.scale || []).map((k) => k.v)) * transMaxScale
+      const baseS = animatedScale ? Math.max(1, maxS) : tr.scale
+      chain.push(`scale=${even(bw * baseS)}:${even(bh * baseS)}`)
       const fx = clip.effects || {}
       chain.push('format=rgba')
 
@@ -330,11 +331,11 @@ async function prepareExport(payload, outPath, { workDir, runFfmpeg }) {
       if (fx.vignette > 0) chain.push(`vignette=angle=${n(0.15 + fx.vignette * 0.9)}`)
       if (fx.grain > 0) chain.push(`noise=alls=${Math.round(fx.grain * 40)}:allf=t+u`)
       if (fx.blur > 0 || fx.vignette > 0 || fx.grain > 0) chain.push('format=rgba')
+      if (animatedScale) chain.push(`scale=w='max(2,trunc(${n(bw)}*(${scaleE})/2)*2)':h='max(2,trunc(${n(bh)}*(${scaleE})/2)*2)':eval=frame`)
 
       // Com escala animada, a camada muda de tamanho a cada quadro: ela é centralizada numa tela
       // transparente fixa (no maior tamanho), recriada a cada quadro, para não deixar rastro.
       if (animatedScale) {
-        const maxS = Math.max(tr.scale, ...(kf.scale || []).map((k) => k.v)) * transMaxScale
         filters.push(chain.join(',') + `[s${i}]`)
         filters.push(`color=c=black@0:s=${even(bw * maxS) + 2}x${even(bh * maxS) + 2}:r=${fps}:d=${n(clip.duration)},format=rgba,setpts=PTS-STARTPTS+${n(start)}/TB[cv${i}]`)
         chain.length = 0

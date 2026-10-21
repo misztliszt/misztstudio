@@ -81,6 +81,13 @@ npm install
 npm run dev
 ```
 
+Testes (lógica da timeline, afinação, exportação com FFmpeg) e verificação de tipos:
+
+```bash
+npm test
+npm run typecheck
+```
+
 Gerar o instalador (`release/MisztStudio-Setup-<versão>.exe`):
 
 ```bash
@@ -106,6 +113,7 @@ npm run dist
 | `src/dsp/` | Afinação/transposição e reverb, compartilhados entre prévia e exportação |
 | `src/anim.ts`, `src/color.ts`, `src/text.ts` | Mesmas fórmulas na prévia e na exportação |
 | `src/components/` | Interface (timeline, inspetor, mixer, diálogos, introdução) |
+| `tests/` | Testes automatizados (Vitest) |
 
 ## Licença
 
