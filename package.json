@@ -13,9 +13,11 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "icon": "electron scripts/make-icon.cjs",
-    "dist": "npm run build && electron-builder --win nsis"
+    "dist": "npm run build && electron-builder --win nsis --publish never",
+    "release": "node scripts/release.cjs"
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
     "ffmpeg-static": "^5.2.0",
     "ffprobe-static": "^3.1.0"
   },
@@ -101,7 +103,15 @@
       "artifactName": "MisztStudio-Setup-${version}.${ext}",
       "license": "LICENSE"
     },
-    "electronDist": "node_modules/electron/dist"
+    "electronDist": "node_modules/electron/dist",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "misztliszt",
+        "repo": "misztstudio",
+        "releaseType": "release"
+      }
+    ]
   },
   "license": "SEE LICENSE IN LICENSE",
   "repository": {

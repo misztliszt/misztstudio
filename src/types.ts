@@ -236,6 +236,43 @@ export interface LinkInfo {
   webpage: string
 }
 
+export interface ExportJob {
+  id: string
+  name: string
+  outPath: string
+  format: ExportFormat
+  state: 'queued' | 'running' | 'done' | 'error' | 'canceled'
+  progress: number
+  error: string | null
+  addedAt: number
+  startedAt?: number
+  finishedAt?: number
+}
+
+/** Preferências do app (settings.json na pasta de dados). */
+export interface AppSettings {
+  downloadDir: string
+  /** null = subpastas de "Gravações" dentro da pasta de downloads. */
+  recordDir: string | null
+  /** null = a última pasta usada. */
+  exportDir: string | null
+  autosaveSeconds: number
+  previewQuality: 'full' | 'half' | 'quarter'
+  proxyMode: 'auto' | 'always' | 'never'
+  checkUpdates: boolean
+  /** Atalhos alterados pelo usuário (id da ação → combinação, ex.: "Ctrl+Shift+S"). */
+  shortcuts: Record<string, string>
+  version: string
+  packaged: boolean
+}
+
+export interface UpdateStatus {
+  state: 'unavailable' | 'idle' | 'checking' | 'latest' | 'downloading' | 'ready' | 'error'
+  version: string | null
+  progress: number
+  error: string | null
+}
+
 /** Tela ou janela que pode ser gravada. */
 export interface CaptureSource {
   id: string
@@ -300,9 +337,18 @@ declare global {
       showInFolder(path: string): Promise<void>
       openMicSettings(): Promise<void>
       platform: string
-      exportVideo(payload: ExportPayload): Promise<string | null>
-      cancelExport(): Promise<void>
-      onExportProgress(cb: (value: number) => void): () => void
+      /** Abre o diálogo de salvar e põe a exportação na fila; null se o usuário cancelar. */
+      exportVideo(payload: ExportPayload): Promise<{ id: string; outPath: string } | null>
+      cancelExport(id: string): Promise<void>
+      clearExports(id?: string): Promise<void>
+      listExports(): Promise<ExportJob[]>
+      onExportJobs(cb: (jobs: ExportJob[]) => void): () => void
+      getSettings(): Promise<AppSettings>
+      setSettings(patch: Partial<AppSettings>): Promise<AppSettings>
+      pickFolder(title: string, current?: string | null): Promise<string | null>
+      checkUpdate(): Promise<UpdateStatus>
+      installUpdate(): Promise<void>
+      onUpdateStatus(cb: (status: UpdateStatus) => void): () => void
       makeProxy(path: string): Promise<string>
       extractFrame(path: string, time: number): Promise<ProbeResult>
       cleanAudio(path: string, inPoint: number, duration: number, level: 'light' | 'medium' | 'strong'): Promise<ProbeResult>

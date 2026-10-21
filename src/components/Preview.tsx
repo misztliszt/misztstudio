@@ -25,6 +25,8 @@ export function Preview({ engine, project, selected, time, duration, playing, on
   const { width, height } = project
   const ref = useRef<HTMLCanvasElement>(null)
   const [rect, setRect] = useState({ left: 0, top: 0, width: 0, height: 0 })
+  // Tamanho em tela calculado aqui: o canvas pode ter menos pixels (qualidade da prévia) e mesmo assim ocupar o palco todo.
+  const [fit, setFit] = useState<{ width: number; height: number } | null>(null)
 
   useEffect(() => {
     engine.attach(ref.current)
@@ -35,7 +37,12 @@ export function Preview({ engine, project, selected, time, duration, playing, on
   useEffect(() => {
     const canvas = ref.current
     if (!canvas) return
-    const update = () => setRect({ left: canvas.offsetLeft, top: canvas.offsetTop, width: canvas.offsetWidth, height: canvas.offsetHeight })
+    const update = () => {
+      const stage = canvas.parentElement!
+      const s = Math.min((stage.clientWidth - 40) / width, (stage.clientHeight - 40) / height)
+      if (s > 0) setFit((f) => (f && Math.abs(f.width - width * s) < 0.5 && Math.abs(f.height - height * s) < 0.5 ? f : { width: width * s, height: height * s }))
+      setRect({ left: canvas.offsetLeft, top: canvas.offsetTop, width: canvas.offsetWidth, height: canvas.offsetHeight })
+    }
     update()
     const ro = new ResizeObserver(update)
     ro.observe(canvas)
@@ -74,7 +81,7 @@ export function Preview({ engine, project, selected, time, duration, playing, on
   return (
     <section className="panel preview">
       <div className="preview-stage">
-        <canvas ref={ref} className="preview-canvas" style={{ aspectRatio: `${width} / ${height}` }} onClick={onCanvasClick} onDoubleClick={onToggle} />
+        <canvas ref={ref} className="preview-canvas" style={fit ?? { aspectRatio: `${width} / ${height}` }} onClick={onCanvasClick} onDoubleClick={onToggle} />
         {selected && !playing && rect.width > 0 && <TransformOverlay project={project} clip={selected} time={time} rect={rect} dispatch={dispatch} checkpoint={checkpoint} />}
       </div>
       <div

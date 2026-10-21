@@ -556,46 +556,156 @@ function reduceCore(p: Project, a: Action): Project {
   }
 }
 
-export interface History {
-  past: Project[]
-  present: Project
-  future: Project[]
+/** Nome curto de cada ação, mostrado no histórico de desfazer. */
+export function actionLabel(a: Action, p: Project): string {
+  switch (a.type) {
+    case 'load':
+      return 'Projeto aberto'
+    case 'addMedia':
+      return a.media.length > 1 ? `Importar ${a.media.length} mídias` : `Importar ${a.media[0]?.name ?? 'mídia'}`
+    case 'updateMedia':
+      return 'Mídia atualizada'
+    case 'removeMedia':
+      return `Remover ${p.media[a.mediaId]?.name ?? 'mídia'}`
+    case 'addClip':
+      return `Adicionar ${p.media[a.mediaId]?.name ?? 'clipe'}`
+    case 'addText':
+      return 'Adicionar texto'
+    case 'addTexts':
+      return `Adicionar ${a.trackName.toLowerCase()}`
+    case 'detachAudio':
+      return 'Separar áudio do vídeo'
+    case 'addStems':
+      return 'Separar voz e instrumentos'
+    case 'addRecording':
+      return 'Gravação de tela'
+    case 'updateClip': {
+      const k = Object.keys(a.patch)
+      const has = (...names: string[]) => names.some((n) => k.includes(n))
+      if (has('text')) return 'Editar texto'
+      if (has('start', 'trackId')) return 'Mover clipe'
+      if (has('duration', 'in')) return 'Aparar clipe'
+      if (has('transform', 'keyframes')) return 'Transformar'
+      if (has('color')) return 'Cor'
+      if (has('effects')) return 'Efeitos'
+      if (has('transitionIn', 'transitionOut')) return 'Transição'
+      if (has('volume', 'volumeKeys', 'fadeIn', 'fadeOut')) return 'Volume do clipe'
+      return 'Editar clipe'
+    }
+    case 'setSpeed':
+      return `Velocidade ${String(Math.round(a.speed * 100) / 100).replace('.', ',')}×`
+    case 'toggleMarker':
+    case 'updateMarker':
+    case 'removeMarker':
+      return 'Marcador'
+    case 'insertClips':
+      return a.clips.length > 1 ? `Colar ${a.clips.length} clipes` : 'Colar clipe'
+    case 'removeClips':
+      return a.ids.length > 1 ? `Excluir ${a.ids.length} clipes` : 'Excluir clipe'
+    case 'rippleDelete':
+      return 'Excluir fechando o buraco'
+    case 'setMagnetic':
+      return a.on ? 'Ligar timeline magnética' : 'Desligar timeline magnética'
+    case 'freezeFrame':
+      return 'Congelar quadro'
+    case 'replaceClipMedia':
+      return 'Processar clipe'
+    case 'speedRamp':
+      return 'Rampa de velocidade'
+    case 'split':
+      return 'Dividir'
+    case 'addTrack':
+      return a.kind === 'video' ? 'Nova trilha de vídeo' : 'Nova trilha de áudio'
+    case 'updateTrack': {
+      const k = Object.keys(a.patch)
+      const name = p.tracks.find((t) => t.id === a.id)?.name ?? 'trilha'
+      if (k.includes('muted')) return a.patch.muted ? `Silenciar ${name}` : `Ativar som de ${name}`
+      if (k.includes('hidden')) return a.patch.hidden ? `Ocultar ${name}` : `Mostrar ${name}`
+      if (k.includes('name')) return 'Renomear trilha'
+      if (k.includes('volume')) return `Volume de ${name}`
+      if (k.includes('fx')) return `Efeitos de ${name}`
+      return `Editar ${name}`
+    }
+    case 'removeTrack':
+      return 'Remover trilha'
+    case 'settings':
+      return 'Formato do projeto'
+  }
 }
 
-type HistoryAction = { type: 'do'; action: Action; merge?: boolean } | { type: 'undo' } | { type: 'redo' } | { type: 'checkpoint' }
+/** Um estado do histórico, com o nome da ação que o criou. */
+export interface HistoryEntry {
+  project: Project
+  label: string
+  at: number
+}
+
+export interface History {
+  past: HistoryEntry[]
+  present: Project
+  presentLabel: string
+  presentAt: number
+  future: HistoryEntry[]
+}
+
+type HistoryAction = { type: 'do'; action: Action; merge?: boolean } | { type: 'undo' } | { type: 'redo' } | { type: 'checkpoint' } | { type: 'jump'; index: number }
 
 const LIMIT = 200
 
+export const initialHistory = (project: Project, label = 'Projeto novo'): History => ({ past: [], present: project, presentLabel: label, presentAt: Date.now(), future: [] })
+
+/** Todos os estados em ordem (passado, atual, futuro) e o índice do atual. */
+export function historyEntries(h: History) {
+  const entries: HistoryEntry[] = [...h.past, { project: h.present, label: h.presentLabel, at: h.presentAt }, ...h.future]
+  return { entries, current: h.past.length }
+}
+
 export function historyReducer(h: History, a: HistoryAction): History {
+  const presentEntry = (): HistoryEntry => ({ project: h.present, label: h.presentLabel, at: h.presentAt })
   switch (a.type) {
-    case 'undo':
+    case 'undo': {
       if (!h.past.length) return h
-      return { past: h.past.slice(0, -1), present: h.past[h.past.length - 1], future: [h.present, ...h.future] }
-    case 'redo':
+      const prev = h.past[h.past.length - 1]
+      return { past: h.past.slice(0, -1), present: prev.project, presentLabel: prev.label, presentAt: prev.at, future: [presentEntry(), ...h.future] }
+    }
+    case 'redo': {
       if (!h.future.length) return h
-      return { past: [...h.past, h.present], present: h.future[0], future: h.future.slice(1) }
+      const next = h.future[0]
+      return { past: [...h.past, presentEntry()], present: next.project, presentLabel: next.label, presentAt: next.at, future: h.future.slice(1) }
+    }
+    case 'jump': {
+      const { entries, current } = historyEntries(h)
+      if (a.index === current || a.index < 0 || a.index >= entries.length) return h
+      const target = entries[a.index]
+      return { past: entries.slice(0, a.index), present: target.project, presentLabel: target.label, presentAt: target.at, future: entries.slice(a.index + 1) }
+    }
     case 'checkpoint':
-      return { past: [...h.past, h.present].slice(-LIMIT), present: h.present, future: [] }
+      // O nome vem da primeira mudança aplicada com `merge` logo depois (ex.: arrastar um clipe).
+      return { past: [...h.past, presentEntry()].slice(-LIMIT), present: h.present, presentLabel: '', presentAt: Date.now(), future: [] }
     case 'do': {
       const next = reduce(h.present, a.action)
       if (next === h.present) return h
+      const label = actionLabel(a.action, h.present)
       // `merge` aplica a mudança sem nova entrada (ex.: arrastar um clipe após um checkpoint).
-      if (a.merge) return { ...h, present: next, future: [] }
-      if (a.action.type === 'load') return { past: [], present: next, future: [] }
+      if (a.merge) return { ...h, present: next, presentLabel: h.presentLabel || label, presentAt: Date.now(), future: [] }
+      if (a.action.type === 'load') return initialHistory(next, 'Projeto aberto')
       // Proxies não são uma edição do usuário: não entram no histórico.
       if (a.action.type === 'updateMedia') {
-        return { past: h.past.map((p) => reduce(p, a.action)), present: next, future: h.future.map((p) => reduce(p, a.action)) }
+        const action = a.action
+        const apply = (e: HistoryEntry) => ({ ...e, project: reduce(e.project, action) })
+        return { ...h, past: h.past.map(apply), present: next, future: h.future.map(apply) }
       }
-      return { past: [...h.past, h.present].slice(-LIMIT), present: next, future: [] }
+      return { past: [...h.past, presentEntry()].slice(-LIMIT), present: next, presentLabel: label, presentAt: Date.now(), future: [] }
     }
   }
 }
 
 export function useProject() {
-  const [h, send] = useReducer(historyReducer, undefined, () => ({ past: [], present: newProject(), future: [] }))
+  const [h, send] = useReducer(historyReducer, undefined, () => initialHistory(newProject()))
   const dispatch = useCallback((action: Action, merge = false) => send({ type: 'do', action, merge }), [])
   const undo = useCallback(() => send({ type: 'undo' }), [])
   const redo = useCallback(() => send({ type: 'redo' }), [])
   const checkpoint = useCallback(() => send({ type: 'checkpoint' }), [])
-  return { project: h.present, dispatch, undo, redo, checkpoint, canUndo: h.past.length > 0, canRedo: h.future.length > 0 }
+  const jump = useCallback((index: number) => send({ type: 'jump', index }), [])
+  return { project: h.present, history: h, dispatch, undo, redo, checkpoint, jump, canUndo: h.past.length > 0, canRedo: h.future.length > 0 }
 }

@@ -9,6 +9,8 @@ const { prepareExport, buildMixdownArgs } = require('./export.cjs')
 const { StemEngine } = require('./stems.cjs')
 const { Downloader } = require('./downloader.cjs')
 const { AudioTools } = require('./audiotools.cjs')
+const { ExportQueue } = require('./exportqueue.cjs')
+const { setupUpdater } = require('./updater.cjs')
 
 const isDev = process.argv.includes('--dev')
 
@@ -188,11 +190,21 @@ const autosavePath = () => path.join(app.getPath('userData'), 'autosave.edproj')
 
 // Preferências gerais (ex.: pasta de downloads).
 const settingsPath = () => path.join(app.getPath('userData'), 'settings.json')
+const DEFAULT_SETTINGS = {
+  downloadDir: null,
+  recordDir: null,
+  exportDir: null,
+  autosaveSeconds: 20,
+  previewQuality: 'full',
+  proxyMode: 'auto',
+  checkUpdates: true,
+  shortcuts: {},
+}
 function readSettings() {
   try {
-    return JSON.parse(fs.readFileSync(settingsPath(), 'utf8')) || {}
+    return { ...DEFAULT_SETTINGS, ...(JSON.parse(fs.readFileSync(settingsPath(), 'utf8')) || {}) }
   } catch {
-    return {}
+    return { ...DEFAULT_SETTINGS }
   }
 }
 function writeSettings(s) {
@@ -225,37 +237,7 @@ function addRecent(filePath) {
 }
 
 let mainWindow
-let exportProc = null
-let exporting = false
-let exportCanceled = false
-
-/** Roda o FFmpeg da exportação; com `total` informa o progresso à janela. */
-function runFfmpeg(args, total = 0) {
-  if (exportCanceled) return Promise.reject(new Error('Exportação cancelada'))
-  return new Promise((resolve, reject) => {
-    const proc = spawn(FFMPEG, args, { windowsHide: true })
-    exportProc = proc
-    let log = ''
-    proc.stderr.on('data', (chunk) => {
-      const text = chunk.toString()
-      log = (log + text).slice(-8000)
-      const m = /time=(\d+):(\d+):(\d+\.?\d*)/.exec(text)
-      if (m && total > 0) {
-        const t = Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3])
-        mainWindow.webContents.send('export:progress', Math.min(1, t / total))
-      }
-    })
-    proc.on('error', (err) => {
-      exportProc = null
-      reject(err)
-    })
-    proc.on('close', (code) => {
-      exportProc = null
-      if (code === 0) resolve()
-      else reject(new Error(exportCanceled || code === null ? 'Exportação cancelada' : 'FFmpeg falhou:\n' + log.slice(-2000)))
-    })
-  })
-}
+let exportQueue = null
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -274,7 +256,24 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
+      // O microfone ao vivo e as exportações continuam com a janela minimizada.
+      backgroundThrottling: false,
     },
+  })
+  // Exportações na fila: pergunta antes de fechar.
+  mainWindow.on('close', (e) => {
+    if (!exportQueue || !exportQueue.active) return
+    const choice = dialog.showMessageBoxSync(mainWindow, {
+      type: 'warning',
+      buttons: ['Continuar exportando', 'Sair e cancelar'],
+      defaultId: 0,
+      cancelId: 0,
+      title: 'Exportação em andamento',
+      message: 'Há exportações em andamento ou na fila.',
+      detail: 'Se sair agora, elas serão canceladas.',
+    })
+    if (choice === 0) e.preventDefault()
+    else for (const j of exportQueue.list()) exportQueue.cancel(j.id)
   })
   if (isDev) mainWindow.loadURL('http://localhost:5173')
   else mainWindow.loadURL('app://bundle/index.html')
@@ -349,35 +348,26 @@ app.whenReady().then(() => {
     return { filePath, json: fs.readFileSync(filePath, 'utf8') }
   })
 
+  exportQueue = new ExportQueue(FFMPEG, (jobs) => mainWindow && mainWindow.webContents.send('export:jobs', jobs))
   ipcMain.handle('export:start', async (_e, payload) => {
-    if (exporting) throw new Error('Já existe uma exportação em andamento')
     const format = (payload.options && payload.options.format) || 'mp4'
     const FORMAT_NAMES = { mp4: 'Vídeo MP4', mov: 'Vídeo QuickTime', webm: 'Vídeo WebM', mp3: 'Áudio MP3', wav: 'Áudio WAV' }
     const base = ((payload.options && payload.options.fileName) || 'video').replace(/[\\/:*?"<>|]/g, '_')
+    const st = readSettings()
+    const dir = st.exportDir || st.lastExportDir
     const res = await dialog.showSaveDialog(mainWindow, {
       title: format === 'mp3' || format === 'wav' ? 'Exportar áudio' : 'Exportar vídeo',
-      defaultPath: `${base}.${format}`,
+      defaultPath: dir ? path.join(dir, `${base}.${format}`) : `${base}.${format}`,
       filters: [{ name: FORMAT_NAMES[format] || format, extensions: [format] }],
     })
-    if (res.canceled) return null
-    const outPath = res.filePath
-    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'miszt-studio-export-'))
-    exporting = true
-    exportCanceled = false
-    try {
-      const { args, total } = await prepareExport(payload, outPath, { workDir, runFfmpeg: (a) => runFfmpeg(a) })
-      await runFfmpeg(args, total)
-      return outPath
-    } finally {
-      exporting = false
-      fs.rmSync(workDir, { recursive: true, force: true })
-    }
+    if (res.canceled || !res.filePath) return null
+    // Lembra a última pasta usada (a preferência pode fixar outra).
+    writeSettings({ ...readSettings(), lastExportDir: path.dirname(res.filePath) })
+    return { id: exportQueue.add(payload, res.filePath), outPath: res.filePath }
   })
-
-  ipcMain.handle('export:cancel', () => {
-    exportCanceled = true
-    if (exportProc) exportProc.kill()
-  })
+  ipcMain.handle('export:cancel', (_e, id) => exportQueue.cancel(id))
+  ipcMain.handle('export:clear', (_e, id) => exportQueue.clear(id))
+  ipcMain.handle('export:list', () => exportQueue.list())
 
   ipcMain.handle('media:proxy', (_e, filePath) => makeProxy(filePath))
 
@@ -394,7 +384,7 @@ app.whenReady().then(() => {
 
   /** Salva uma gravação do microfone (WebM/Opus do MediaRecorder) e converte para WAV. */
   ipcMain.handle('record:save', async (_e, data) => {
-    const dir = path.join(downloader.outDir, 'Gravações')
+    const dir = readSettings().recordDir || path.join(downloader.outDir, 'Gravações')
     fs.mkdirSync(dir, { recursive: true })
     const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19)
     const webm = path.join(dir, `Gravação ${stamp}.webm`)
@@ -441,7 +431,7 @@ app.whenReady().then(() => {
   const screenJobs = new Map()
   ipcMain.handle('screen:begin', (_e, parts) => {
     const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19)
-    const dir = path.join(downloader.outDir, 'Gravações de tela', `Tela ${stamp}`)
+    const dir = path.join(readSettings().recordDir || path.join(downloader.outDir, 'Gravações de tela'), `Tela ${stamp}`)
     fs.mkdirSync(dir, { recursive: true })
     const id = crypto.randomUUID()
     const files = {}
@@ -634,6 +624,22 @@ app.whenReady().then(() => {
     writeSettings({ ...readSettings(), downloadDir: downloader.outDir })
     return downloader.outDir
   })
+  ipcMain.handle('settings:get', () => ({ ...readSettings(), downloadDir: downloader.outDir, version: app.getVersion(), packaged: app.isPackaged }))
+  ipcMain.handle('settings:set', (_e, patch) => {
+    const next = { ...readSettings(), ...patch }
+    writeSettings(next)
+    if (patch.downloadDir) downloader.outDir = patch.downloadDir
+    if ('checkUpdates' in patch) updater.setEnabled(!!patch.checkUpdates)
+    return { ...next, downloadDir: downloader.outDir, version: app.getVersion(), packaged: app.isPackaged }
+  })
+  ipcMain.handle('settings:pickFolder', async (_e, title, current) => {
+    const res = await dialog.showOpenDialog(mainWindow, { title, defaultPath: current || downloader.outDir, properties: ['openDirectory', 'createDirectory'] })
+    return res.canceled || !res.filePaths[0] ? null : res.filePaths[0]
+  })
+  const updater = setupUpdater(() => mainWindow, readSettings().checkUpdates)
+  ipcMain.handle('update:check', () => updater.check(true))
+  ipcMain.handle('update:install', () => updater.install())
+
   const sendDl = (msg) => mainWindow && mainWindow.webContents.send('ytdlp:progress', msg)
   ipcMain.handle('ytdlp:status', () => downloader.status())
   ipcMain.handle('ytdlp:install', () => downloader.install(sendDl))

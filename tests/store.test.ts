@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { historyReducer, mainTrackId, reduce, type History } from '../src/store'
+import { historyEntries, historyReducer, initialHistory, mainTrackId, reduce, type History } from '../src/store'
 import type { Project } from '../src/types'
 import { clip, emptyProject, media } from './helpers'
 
@@ -97,7 +97,7 @@ describe('gravação de tela', () => {
 describe('histórico', () => {
   it('desfazer e refazer', () => {
     const start = withClips(['a', 0, 4])
-    let h: History = { past: [], present: start, future: [] }
+    let h: History = initialHistory(start)
     h = historyReducer(h, { type: 'do', action: { type: 'split', time: 2, ids: ['a'] } })
     expect(h.present.clips).toHaveLength(2)
     h = historyReducer(h, { type: 'undo' })
@@ -105,9 +105,27 @@ describe('histórico', () => {
     h = historyReducer(h, { type: 'redo' })
     expect(h.present.clips).toHaveLength(2)
   })
+  it('cada passo tem um nome e dá para pular para qualquer ponto', () => {
+    let h: History = initialHistory(withClips(['a', 0, 4]))
+    h = historyReducer(h, { type: 'do', action: { type: 'split', time: 2, ids: ['a'] } })
+    h = historyReducer(h, { type: 'do', action: { type: 'setSpeed', id: 'a', speed: 2 } })
+    expect(historyEntries(h).entries.map((e) => e.label)).toEqual(['Projeto novo', 'Dividir', 'Velocidade 2×'])
+    h = historyReducer(h, { type: 'jump', index: 0 })
+    expect(h.present.clips).toHaveLength(1)
+    expect(historyEntries(h).current).toBe(0)
+    h = historyReducer(h, { type: 'jump', index: 2 })
+    expect(h.presentLabel).toBe('Velocidade 2×')
+  })
+  it('arrastar (checkpoint + merge) vira um único passo com nome', () => {
+    let h: History = initialHistory(withClips(['a', 0, 2]))
+    h = historyReducer(h, { type: 'checkpoint' })
+    h = historyReducer(h, { type: 'do', action: { type: 'updateClip', id: 'a', patch: { start: 1 } }, merge: true })
+    h = historyReducer(h, { type: 'do', action: { type: 'updateClip', id: 'a', patch: { start: 2 } }, merge: true })
+    expect(historyEntries(h).entries.map((e) => e.label)).toEqual(['Projeto novo', 'Mover clipe'])
+  })
   it('ação recusada não cria entrada', () => {
     const p = withClips(['a', 0, 2], ['b', 3, 2])
-    const h: History = { past: [], present: p, future: [] }
+    const h: History = initialHistory(p)
     expect(historyReducer(h, { type: 'do', action: { type: 'updateClip', id: 'b', patch: { start: 1 } } })).toBe(h)
   })
 })

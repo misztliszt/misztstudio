@@ -27,6 +27,14 @@ export class PlaybackEngine {
   private lutRenderer: LutRenderer | null = null
   private time = 0
   private playing = false
+  /** Fração da resolução do projeto usada na prévia (1, 0,5 ou 0,25). */
+  private quality = 1
+
+  setQuality(q: number) {
+    if (q === this.quality) return
+    this.quality = q
+    this.draw()
+  }
 
   constructor() {
     this.audio.init()
@@ -172,13 +180,18 @@ export class PlaybackEngine {
     const canvas = this.canvas
     const p = this.project
     if (!canvas || !p) return
-    if (canvas.width !== p.width || canvas.height !== p.height) {
-      canvas.width = p.width
-      canvas.height = p.height
+    // Qualidade da prévia: o canvas pode ter menos pixels; as contas continuam no tamanho do projeto.
+    const q = this.quality
+    const cw = Math.max(2, Math.round(p.width * q))
+    const ch = Math.max(2, Math.round(p.height * q))
+    if (canvas.width !== cw || canvas.height !== ch) {
+      canvas.width = cw
+      canvas.height = ch
     }
     const ctx = canvas.getContext('2d')!
+    ctx.setTransform(q, 0, 0, q, 0, 0)
     ctx.fillStyle = '#000'
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    ctx.fillRect(0, 0, p.width, p.height)
     const t = this.time
 
     // Trilhas de baixo para cima: a primeira trilha da lista fica por cima.
@@ -189,7 +202,7 @@ export class PlaybackEngine {
       const local = t - clip.start
 
       if (clip.text) {
-        drawText(ctx, clip.text, canvas.width, canvas.height, local, clip.duration)
+        drawText(ctx, clip.text, p.width, p.height, local, clip.duration)
         continue
       }
 
@@ -227,8 +240,8 @@ export class PlaybackEngine {
       // A saída da LUT pode ter outra resolução; o corte é em fração, então usamos as dimensões reais da fonte.
       const srcW = source instanceof HTMLCanvasElement ? source.width : sw
       const srcH = source instanceof HTMLCanvasElement ? source.height : sh
-      const W = canvas.width
-      const H = canvas.height
+      const W = p.width
+      const H = p.height
       const g = clipLayout(clip, sw, sh, W, H, local)
       if (g.opacity <= 0 || g.w < 1 || g.h < 1) continue
       const tr = transitionState(clip, local, W, H)
@@ -241,7 +254,7 @@ export class PlaybackEngine {
       ctx.rotate(((g.rotation + tr.rotation) * Math.PI) / 180)
       if (fx?.mirror) ctx.scale(-1, 1)
       ctx.globalAlpha = tr.alpha * g.opacity
-      const blur = fx?.blur ? ` blur(${(fx.blur * H) / 1080}px)` : ''
+      const blur = fx?.blur ? ` blur(${(fx.blur * H * q) / 1080}px)` : ''
       const css = cssFilter(clip.color)
       ctx.filter = css === 'none' && !blur ? 'none' : `${css === 'none' ? '' : css}${blur}`.trim()
       ctx.drawImage(

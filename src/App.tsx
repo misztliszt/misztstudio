@@ -35,6 +35,8 @@ import {
   Plug,
   Mic,
   MonitorPlay,
+  History as HistoryIcon,
+  Settings,
 } from 'lucide-react'
 import type { Clip } from './types'
 import { defaultTransform } from './anim'
@@ -45,6 +47,10 @@ import { LinkImportDialog } from './components/LinkImportDialog'
 import { BgRemoveDialog } from './components/BgRemoveDialog'
 import { VstDialog } from './components/VstDialog'
 import { RecordDialog } from './components/RecordDialog'
+import { ExportQueue } from './components/ExportQueue'
+import { HistoryPanel } from './components/HistoryPanel'
+import { PreferencesDialog } from './components/PreferencesDialog'
+import { buildKeymap, comboOf, shortcutLabel, type ShortcutId } from './shortcuts'
 import { ScreenRecordDialog } from './components/ScreenRecordDialog'
 import { detectBeats } from './beats'
 import { getPeaks } from './waveform'
@@ -52,7 +58,7 @@ import type { ExportOptions } from './types'
 import { ContextMenu, type MenuItem, type MenuState } from './ui/ContextMenu'
 import { PlaybackEngine } from './engine'
 import { projectDuration, SPEED_RAMPS, uid, useProject, type Template } from './store'
-import type { ExportPayload, Media, ProbeResult, Project } from './types'
+import type { AppSettings, ExportPayload, Media, ProbeResult, Project, UpdateStatus } from './types'
 import { colorMatrix } from './color'
 import { FRAME_ANIMATIONS, renderTextPng, renderTextSequence } from './text'
 import { MediaBin } from './components/MediaBin'
@@ -69,13 +75,12 @@ import logoUrl from '../build/icon.png'
 
 /** Codecs que o Chromium decodifica bem; outros (HEVC, ProRes…) precisam de proxy. */
 const PLAYABLE = new Set(['h264', 'vp8', 'vp9', 'av1', 'theora', 'mpeg4'])
-const AUTOSAVE_MS = 20_000
-
-const needsProxy = (m: Media) => m.kind === 'video' && !m.proxy && ((m.codec && !PLAYABLE.has(m.codec)) || m.width * m.height > 1920 * 1080 * 1.1)
+const needsProxy = (m: Media, mode: AppSettings['proxyMode'] = 'auto') =>
+  m.kind === 'video' && !m.proxy && mode !== 'never' && (mode === 'always' || (m.codec && !PLAYABLE.has(m.codec)) || m.width * m.height > 1920 * 1080 * 1.1)
 const errorText = (err: unknown) => String(err instanceof Error ? err.message : err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
 
 export function App() {
-  const { project, dispatch, undo, redo, checkpoint, canUndo, canRedo } = useProject()
+  const { project, history, dispatch, undo, redo, checkpoint, jump, canUndo, canRedo } = useProject()
   const { toast, confirm } = useFeedback()
   const [screen, setScreen] = useState<'loading' | 'welcome' | 'editor'>('loading')
   const [showIntro, setShowIntro] = useState(true)
@@ -91,10 +96,24 @@ export function App() {
   const [linkOpen, setLinkOpen] = useState(false)
   const [bgClip, setBgClip] = useState<string | null>(null)
   const [filePath, setFilePath] = useState<string | null>(null)
-  const [exporting, setExporting] = useState<{ progress: number } | null>(null)
   const [savedProject, setSavedProject] = useState<Project | null>(null)
   const [proxyProgress, setProxyProgress] = useState<Record<string, number>>({})
   const engine = useMemo(() => new PlaybackEngine(), [])
+  const [settings, setSettings] = useState<AppSettings | null>(null)
+  const [prefsOpen, setPrefsOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [update, setUpdate] = useState<UpdateStatus | null>(null)
+  const shortcuts = settings?.shortcuts
+  const key = useCallback((id: ShortcutId) => shortcutLabel(id, shortcuts), [shortcuts])
+
+  useEffect(() => {
+    void window.api.getSettings().then(setSettings)
+  }, [])
+  const changeSettings = useCallback(async (patch: Partial<AppSettings>) => {
+    setSettings((s) => (s ? { ...s, ...patch } : s))
+    setSettings(await window.api.setSettings(patch))
+  }, [])
+  useEffect(() => engine.setQuality(settings?.previewQuality === 'half' ? 0.5 : settings?.previewQuality === 'quarter' ? 0.25 : 1), [engine, settings?.previewQuality])
   const duration = projectDuration(project)
 
   // Relógio de reprodução: o cursor (clock) anda a cada quadro fora do React;
@@ -192,10 +211,10 @@ export function App() {
         dispatch({ type: 'addMedia', media: fresh })
         toast.success(fresh.length === 1 ? 'Mídia importada' : `${fresh.length} mídias importadas`, { detail: fresh.map((m) => m.name).join(', ') })
       }
-      for (const m of fresh) if (needsProxy(m)) requestProxy(m)
+      for (const m of fresh) if (needsProxy(m, settings?.proxyMode)) requestProxy(m)
       if (errors.length) toast.error('Alguns arquivos não foram importados', { detail: errors.join(' · ') })
     },
-    [project.media, dispatch, requestProxy, toast],
+    [project.media, dispatch, requestProxy, toast, settings?.proxyMode],
   )
 
   const importMedia = async () => addProbed(await window.api.importMedia())
@@ -598,12 +617,28 @@ export function App() {
   // Autosave.
   const latest = useRef({ project, dirty })
   latest.current = { project, dirty }
+  const autosaveMs = (settings?.autosaveSeconds ?? 20) * 1000
   useEffect(() => {
     const id = setInterval(() => {
       if (latest.current.dirty) void window.api.autosave(JSON.stringify(latest.current.project))
-    }, AUTOSAVE_MS)
+    }, autosaveMs)
     return () => clearInterval(id)
-  }, [])
+  }, [autosaveMs])
+
+  // Atualização automática: avisa quando a versão nova já foi baixada.
+  useEffect(
+    () =>
+      window.api.onUpdateStatus((st) => {
+        setUpdate(st)
+        if (st.state === 'ready')
+          toast.info(`Miszt Studio ${st.version} está pronto`, {
+            detail: 'Reinicie para instalar a atualização (ou ela entra ao fechar o app).',
+            duration: 20000,
+            action: { label: 'Reiniciar agora', run: () => void window.api.installUpdate() },
+          })
+      }),
+    [toast],
+  )
 
   // ---------- Exportação ----------
   const [exportOpen, setExportOpen] = useState(false)
@@ -624,71 +659,132 @@ export function App() {
       else if (c.text) payload.textImages[c.id] = renderTextPng(c.text, project.width, project.height)
       else if (c.color.saturation !== 1 || c.color.hue !== 0 || c.color.sepia !== 0) payload.colorMatrices[c.id] = colorMatrix(c.color)
     }
-    const off = window.api.onExportProgress((progress) => setExporting({ progress }))
-    setExporting({ progress: 0 })
     try {
-      const out = await window.api.exportVideo(payload)
-      if (out) toast.success(options.format === 'mp3' || options.format === 'wav' ? 'Áudio exportado' : 'Vídeo exportado', { detail: out.split(/[\\/]/).pop(), duration: 8000, action: { label: 'Mostrar na pasta', run: () => void window.api.showInFolder(out) } })
+      const job = await window.api.exportVideo(payload)
+      if (job) toast.info('Exportação na fila', { detail: 'Pode continuar editando; o progresso aparece no canto da janela.', duration: 3500 })
     } catch (err) {
-      const msg = errorText(err)
-      if (!msg.includes('cancelada')) toast.error('A exportação falhou', { detail: msg.slice(0, 300) })
-      else toast.info('Exportação cancelada')
-    } finally {
-      off()
-      setExporting(null)
+      toast.error('A exportação falhou', { detail: errorText(err).slice(0, 300) })
     }
   }
 
   // ---------- Teclado ----------
   useEffect(() => {
     if (screen !== 'editor') return
+    const keymap = buildKeymap(shortcuts)
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement
       if (el.tagName === 'SELECT' || el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && !['range', 'checkbox', 'color'].includes((el as HTMLInputElement).type))) return
       if (dialog || stemsClip || document.querySelector('.modal')) return
-      const ctrl = e.ctrlKey || e.metaKey
-      const key = e.key.toLowerCase()
-      if (ctrl && key === 'z' && !e.shiftKey) undo()
-      else if (ctrl && (key === 'y' || (key === 'z' && e.shiftKey))) redo()
-      else if (ctrl && key === 's') save(e.shiftKey)
-      else if (ctrl && key === 'o') open()
-      else if (ctrl && key === 'i') importMedia()
-      else if (ctrl && key === 'e') exportVideo()
-      else if (ctrl && key === 'c') copySelection()
-      else if (ctrl && key === 'x') cut()
-      else if (ctrl && key === 'v') paste()
-      else if (ctrl && key === 'd') duplicate()
-      else if (ctrl && key === 'a') setSelection(project.clips.map((c) => c.id))
-      else if (ctrl) return
-      else if (e.code === 'Space') togglePlay()
-      else if (key === 's') split()
-      else if (key === 't') addText()
-      else if ((key === 'delete' || key === 'backspace') && e.shiftKey) rippleDelete()
-      else if (key === 'delete' || key === 'backspace') removeSelected()
-      else if (key === 'm') dispatch({ type: 'toggleMarker', t: time })
-      else if (key === 'k') {
-        if (playing) togglePlay()
-      } else if (key === 'l') {
-        if (!playing) togglePlay()
-      } else if (key === 'j') seek(time - 5)
-      else if (key === '[' || key === ']') {
-        const ts = (project.markers ?? []).map((m) => m.t)
-        const target = key === '[' ? [...ts].reverse().find((t) => t < time - 0.01) : ts.find((t) => t > time + 0.01)
-        if (target !== undefined) seek(target)
-      } else if (key === 'home') seek(0)
-      else if (key === 'end') seek(duration)
-      else if (key === 'arrowleft') seek(time - (e.shiftKey ? 1 : 1 / project.fps))
-      else if (key === 'arrowright') seek(time + (e.shiftKey ? 1 : 1 / project.fps))
-      else if (key === 'escape') {
-        setSelection([])
-        setSelectedTrack(null)
-      } else return
+      const combo = comboOf(e)
+      const id = combo ? keymap.get(combo) : undefined
+      if (!id) return
+      switch (id) {
+        case 'undo':
+          undo()
+          break
+        case 'redo':
+          redo()
+          break
+        case 'history':
+          setHistoryOpen((o) => !o)
+          break
+        case 'save':
+          save()
+          break
+        case 'saveAs':
+          save(true)
+          break
+        case 'open':
+          open()
+          break
+        case 'import':
+          importMedia()
+          break
+        case 'export':
+          exportVideo()
+          break
+        case 'preferences':
+          setPrefsOpen(true)
+          break
+        case 'copy':
+          copySelection()
+          break
+        case 'cut':
+          cut()
+          break
+        case 'paste':
+          paste()
+          break
+        case 'duplicate':
+          duplicate()
+          break
+        case 'selectAll':
+          setSelection(project.clips.map((c) => c.id))
+          break
+        case 'play':
+          togglePlay()
+          break
+        case 'split':
+          split()
+          break
+        case 'text':
+          addText()
+          break
+        case 'rippleDelete':
+          rippleDelete()
+          break
+        case 'delete':
+          removeSelected()
+          break
+        case 'marker':
+          dispatch({ type: 'toggleMarker', t: time })
+          break
+        case 'pause':
+          if (playing) togglePlay()
+          break
+        case 'forwardPlay':
+          if (!playing) togglePlay()
+          break
+        case 'back5':
+          seek(time - 5)
+          break
+        case 'prevMarker':
+        case 'nextMarker': {
+          const ts = (project.markers ?? []).map((m) => m.t)
+          const target = id === 'prevMarker' ? [...ts].reverse().find((t) => t < time - 0.01) : ts.find((t) => t > time + 0.01)
+          if (target !== undefined) seek(target)
+          break
+        }
+        case 'home':
+          seek(0)
+          break
+        case 'end':
+          seek(duration)
+          break
+        case 'frameBack':
+          seek(time - 1 / project.fps)
+          break
+        case 'frameForward':
+          seek(time + 1 / project.fps)
+          break
+        case 'secondBack':
+          seek(time - 1)
+          break
+        case 'secondForward':
+          seek(time + 1)
+          break
+        case 'deselect':
+          setSelection([])
+          setSelectedTrack(null)
+          setHistoryOpen(false)
+          break
+      }
       e.preventDefault()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [screen, undo, redo, save, togglePlay, split, addText, removeSelected, seek, time, duration, project.fps, dialog, stemsClip])
+  }, [screen, undo, redo, save, togglePlay, split, addText, removeSelected, seek, time, duration, project.fps, dialog, stemsClip, shortcuts])
 
   // Mantém seleções coerentes com desfazer/refazer.
   useEffect(() => {
@@ -743,30 +839,33 @@ export function App() {
           <>
             <div className="tool-group">
               <IconButton icon={Home} label="Início" onClick={goHome} />
-              <IconButton icon={FolderOpen} label="Abrir projeto" shortcut="Ctrl+O" onClick={open} />
-              <IconButton icon={Save} label="Salvar" shortcut="Ctrl+S" onClick={() => save()} />
+              <IconButton icon={FolderOpen} label="Abrir projeto" shortcut={key('open')} onClick={open} />
+              <IconButton icon={Save} label="Salvar" shortcut={key('save')} onClick={() => save()} />
+              <IconButton icon={Settings} label="Preferências" shortcut={key('preferences')} onClick={() => setPrefsOpen(true)} />
             </div>
             <div className="tool-group">
-              <IconButton icon={Undo2} label="Desfazer" shortcut="Ctrl+Z" onClick={undo} disabled={!canUndo} />
-              <IconButton icon={Redo2} label="Refazer" shortcut="Ctrl+Y" onClick={redo} disabled={!canRedo} />
+              <IconButton icon={Undo2} label="Desfazer" shortcut={key('undo')} onClick={undo} disabled={!canUndo} />
+              <IconButton icon={Redo2} label="Refazer" shortcut={key('redo')} onClick={redo} disabled={!canRedo} />
+              <IconButton icon={HistoryIcon} label="Histórico" shortcut={key('history')} onClick={() => setHistoryOpen((o) => !o)} active={historyOpen} />
             </div>
             <div className="tool-group">
-              <IconButton icon={Scissors} label="Dividir no cursor" shortcut="S" onClick={split} />
-              <IconButton icon={Trash2} label="Excluir seleção" shortcut="Del" onClick={removeSelected} disabled={!selection.length} />
+              <IconButton icon={Scissors} label="Dividir no cursor" shortcut={key('split')} onClick={split} />
+              <IconButton icon={Trash2} label="Excluir seleção" shortcut={key('delete')} onClick={removeSelected} disabled={!selection.length} />
             </div>
             <div className="tool-group">
-              <IconButton icon={Type} label="Texto" shortcut="T" onClick={() => addText()} showLabel />
+              <IconButton icon={Type} label="Texto" shortcut={key('text')} onClick={() => addText()} showLabel />
               <IconButton icon={Captions} label="Legendas" onClick={() => setDialog('captions')} showLabel />
               <IconButton icon={Mic} label="Gravar" onClick={() => { setPlaying(false); setRecordOpen(true) }} showLabel />
               <IconButton icon={MonitorPlay} label="Gravar tela" onClick={() => { setPlaying(false); setScreenOpen(true) }} />
             </div>
             <div className="titlebar-drag" />
-            <button className="btn primary export-btn" onClick={exportVideo} data-tip="Ctrl+E">
+            <button className="btn primary export-btn" onClick={exportVideo} data-tip={key('export')}>
               <Upload size={15} strokeWidth={2.2} /> Exportar
             </button>
           </>
         )}
         {screen !== 'editor' && <div className="titlebar-drag" />}
+        {screen !== 'editor' && <IconButton icon={Settings} label="Preferências" onClick={() => setPrefsOpen(true)} />}
         {isWin && <div className="window-controls-space" />}
       </header>
 
@@ -1010,20 +1109,18 @@ export function App() {
 
       {exportOpen && <ExportDialog project={project} duration={duration} name={projectName === 'Sem título' ? 'video' : projectName} onExport={runExport} onClose={() => setExportOpen(false)} />}
 
-      {exporting && (
-        <div className="modal-backdrop">
-          <div className="modal export-modal">
-            <div className="export-ring" style={{ ['--p' as string]: exporting.progress }}>
-              <span>{Math.round(exporting.progress * 100)}%</span>
-            </div>
-            <h2>Exportando vídeo</h2>
-            <p className="dim">{exporting.progress === 0 ? 'Preparando efeitos de áudio…' : 'Renderizando com FFmpeg…'}</p>
-            <button className="btn" onClick={() => window.api.cancelExport()}>
-              Cancelar
-            </button>
-          </div>
-        </div>
+      <ExportQueue />
+      {historyOpen && screen === 'editor' && (
+        <HistoryPanel
+          history={history}
+          onJump={(i) => {
+            setPlaying(false)
+            jump(i)
+          }}
+          onClose={() => setHistoryOpen(false)}
+        />
       )}
+      {prefsOpen && settings && <PreferencesDialog settings={settings} update={update} onChange={(p) => void changeSettings(p)} onClose={() => setPrefsOpen(false)} />}
     </div>
   )
 }

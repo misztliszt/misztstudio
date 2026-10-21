@@ -3530,3 +3530,358 @@ button.track-name:hover {
     opacity: 0.3;
   }
 }
+
+/* ---------- Fila de exportação ---------- */
+.export-queue {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  width: 320px;
+  z-index: 60;
+  border-radius: var(--radius-lg, 12px);
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+  animation: pop-in 0.25s var(--ease);
+}
+.eq-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+.eq-head span {
+  flex: 1;
+}
+.eq-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 260px;
+  overflow-y: auto;
+  border-top: 1px solid var(--line);
+}
+.eq-job {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  color: var(--text-2);
+}
+.eq-job + .eq-job {
+  border-top: 1px solid var(--line);
+}
+.eq-job.done > svg {
+  color: var(--success);
+}
+.eq-job.error > svg {
+  color: var(--danger);
+}
+.eq-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+  font-size: 12px;
+}
+.eq-body .dim {
+  font-size: 11px;
+}
+.progress.small {
+  height: 4px;
+}
+.spin {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---------- Histórico de desfazer ---------- */
+.history-panel {
+  position: fixed;
+  top: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 320px;
+  z-index: 120;
+  border-radius: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+  animation: pop-in 0.2s var(--ease);
+  -webkit-app-region: no-drag;
+}
+.history-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.history-head .dim {
+  flex: 1;
+  font-size: 11.5px;
+}
+.history-list {
+  max-height: 380px;
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.history-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+.history-item .ellipsis {
+  flex: 1;
+}
+.history-item .dim {
+  font-size: 11px;
+  flex: none;
+}
+.history-item:hover {
+  background: var(--surface-3);
+}
+.history-item.current {
+  background: var(--accent-soft);
+  color: var(--text);
+  font-weight: 600;
+}
+.history-item.future {
+  opacity: 0.45;
+}
+.history-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-3);
+  flex: none;
+}
+.history-item.current .history-dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.history-hint {
+  margin: 0;
+  padding: 8px 12px 10px;
+  font-size: 11px;
+  color: var(--text-3);
+  border-top: 1px solid var(--line);
+}
+
+/* ---------- Preferências ---------- */
+.prefs-dialog {
+  width: 820px;
+  max-width: calc(100vw - 48px);
+  height: 600px;
+  max-height: calc(100vh - 80px);
+  padding: 0;
+  display: flex;
+  overflow: hidden;
+}
+.prefs-nav {
+  width: 200px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 20px 12px;
+  background: var(--surface-1);
+  border-right: 1px solid var(--line);
+}
+.prefs-nav h2 {
+  margin: 0 8px 14px;
+  font-size: 16px;
+}
+.prefs-nav button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.prefs-nav button:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+.prefs-nav button.active {
+  background: var(--accent-soft);
+  color: var(--text);
+  font-weight: 600;
+}
+.prefs-nav button.active svg {
+  color: var(--accent);
+}
+.prefs-version {
+  margin-top: auto;
+  padding: 0 8px;
+  font-size: 11px;
+  color: var(--text-3);
+}
+.prefs-body {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+}
+.prefs-body h3 {
+  margin: 6px 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
+.prefs-body h3:not(:first-child) {
+  margin-top: 22px;
+}
+.prefs-body .modal-actions {
+  margin-top: auto;
+  padding-top: 18px;
+}
+.prefs-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.prefs-label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.prefs-label strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+.prefs-label span {
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+.prefs-folder {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 300px;
+  flex: none;
+}
+.prefs-shortcuts-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.shortcut-group {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 14px;
+}
+.shortcut-group-name {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--accent);
+  margin: 4px 0 4px;
+}
+.shortcut-row {
+  display: grid;
+  grid-template-columns: 1fr auto 22px;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+.kbd-btn {
+  min-width: 120px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface-1);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  cursor: pointer;
+}
+.kbd-btn:hover {
+  border-color: var(--accent);
+}
+.kbd-btn.custom {
+  color: var(--accent);
+}
+.kbd-btn.shortcut-capture {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  font-family: inherit;
+  color: var(--accent);
+}
+.icon-btn-space {
+  width: 22px;
+}
+.update-box {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 10px;
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+}
+.update-box > svg {
+  color: var(--accent);
+  flex: none;
+}
+.update-box > div {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+.update-box strong {
+  color: var(--text);
+  font-size: 13px;
+}
+.segmented button {
+  white-space: nowrap;
+}
