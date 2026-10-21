@@ -182,6 +182,7 @@ export type Action =
   | { type: 'detachAudio'; clipId: string; media?: Media }
   | { type: 'addStems'; sourceClipId: string; items: { label: string; media: Media }[]; muteOriginal: boolean }
   | { type: 'addRecording'; start: number; video: Media | null; audio: { label: string; media: Media }[] }
+  | { type: 'addDjSet'; start: number; audio: { label: string; media: Media } | null; decks: { label: string; muted: boolean; clips: Pick<Clip, 'mediaId' | 'start' | 'in' | 'duration' | 'speed' | 'volume' | 'volumeKeys'>[] }[] }
   | { type: 'updateClip'; id: string; patch: Partial<Clip> }
   | { type: 'setSpeed'; id: string; speed: number }
   | { type: 'toggleMarker'; t: number }
@@ -373,6 +374,26 @@ function reduceCore(p: Project, a: Action): Project {
         clips.push({ ...clipDefaults(), id: uid(), mediaId: m.id, trackId: track.id, start: a.start, in: 0, duration: m.duration })
       }
       return { ...next, tracks: [...next.tracks, ...tracks], clips: [...next.clips, ...clips] }
+    }
+    case 'addDjSet': {
+      // Set do modo DJ: o áudio gravado numa trilha e, se pedido, os clipes de cada deck em trilhas próprias.
+      const media = { ...p.media }
+      const tracks: Track[] = []
+      const clips: Clip[] = []
+      if (a.audio) {
+        media[a.audio.media.id] = a.audio.media
+        const track = makeTrack('audio', a.audio.label)
+        tracks.push(track)
+        clips.push({ ...clipDefaults(), id: uid(), mediaId: a.audio.media.id, trackId: track.id, start: a.start, in: 0, duration: a.audio.media.duration })
+      }
+      for (const d of a.decks) {
+        if (!d.clips.length) continue
+        const track = { ...makeTrack('audio', d.label), muted: d.muted }
+        tracks.push(track)
+        for (const c of d.clips) if (media[c.mediaId!]) clips.push({ ...clipDefaults(), ...c, id: uid(), trackId: track.id })
+      }
+      if (!clips.length) return p
+      return { ...p, media, tracks: [...p.tracks, ...tracks], clips: [...p.clips, ...clips] }
     }
     case 'updateClip': {
       const clip = p.clips.find((c) => c.id === a.id)
@@ -579,6 +600,8 @@ export function actionLabel(a: Action, p: Project): string {
       return 'Separar voz e instrumentos'
     case 'addRecording':
       return 'Gravação de tela'
+    case 'addDjSet':
+      return 'Set de DJ'
     case 'updateClip': {
       const k = Object.keys(a.patch)
       const has = (...names: string[]) => names.some((n) => k.includes(n))

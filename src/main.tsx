@@ -5,6 +5,7 @@ import { App } from './App'
 import { FeedbackProvider } from './ui/feedback'
 import { ErrorBoundary } from './ui/ErrorBoundary'
 import './styles.css'
+import './components/dj/dj.css'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

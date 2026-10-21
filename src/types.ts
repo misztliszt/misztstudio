@@ -25,6 +25,40 @@ export interface Media {
   key?: MusicalKey | null
   /** Créditos de mídias com licença Creative Commons (biblioteca do app). */
   credit?: MediaCredit | null
+  /** Hot cues importados de uma biblioteca de DJ (ou marcados no modo DJ). */
+  cues?: DjCue[] | null
+}
+
+export interface DjCue {
+  name: string
+  time: number
+  /** 0–7 = hot cue; null = memory cue. */
+  num: number | null
+  color: string | null
+  /** Duração do loop salvo, se for um loop. */
+  loop?: number | null
+}
+
+export interface DjTrack {
+  id: string
+  path: string
+  title: string | null
+  artist: string | null
+  duration: number
+  bpm: number | null
+  key: MusicalKey | null
+  grid: { bpm: number; offset: number } | null
+  cues: DjCue[]
+  exists: boolean
+}
+
+export type DjSource = 'rekordbox' | 'traktor' | 'serato' | 'engine'
+
+export interface DjLibrary {
+  source: DjSource
+  file: string
+  tracks: DjTrack[]
+  playlists: { name: string; trackIds: string[] }[]
 }
 
 export interface MediaCredit {
@@ -397,6 +431,9 @@ declare global {
       installUpdate(): Promise<void>
       onUpdateStatus(cb: (status: UpdateStatus) => void): () => void
       detectKey(path: string, inPoint?: number, duration?: number): Promise<MusicalKey | null>
+      probePaths(paths: string[]): Promise<ProbeResult[]>
+      djDetect(): Promise<Partial<Record<DjSource, string>>>
+      djLoad(source: DjSource, target?: string | null): Promise<DjLibrary | null>
       makeProxy(path: string): Promise<string>
       extractFrame(path: string, time: number): Promise<ProbeResult>
       cleanAudio(path: string, inPoint: number, duration: number, level: 'light' | 'medium' | 'strong'): Promise<ProbeResult>

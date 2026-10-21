@@ -13,6 +13,7 @@ const { ExportQueue } = require('./exportqueue.cjs')
 const { setupUpdater } = require('./updater.cjs')
 const { detectKeyFile } = require('./analysis.cjs')
 const { Library } = require('./library.cjs')
+const { loadLibrary, detectSources } = require('./djlibrary.cjs')
 
 const isDev = process.argv.includes('--dev')
 
@@ -380,6 +381,26 @@ app.whenReady().then(() => {
 
   ipcMain.handle('media:proxy', (_e, filePath) => makeProxy(filePath))
   ipcMain.handle('audio:key', (_e, filePath, inPoint, duration) => detectKeyFile(FFMPEG, filePath, inPoint, duration))
+  ipcMain.handle('media:probePaths', (_e, paths) => probeMany(paths.filter((p) => typeof p === 'string' && fs.existsSync(p))))
+
+  // ---------- Bibliotecas de DJ (rekordbox XML, Traktor NML, Serato, Engine DJ) ----------
+  ipcMain.handle('dj:detect', () => detectSources())
+  ipcMain.handle('dj:load', async (_e, source, target) => {
+    let file = target
+    if (!file) {
+      const found = detectSources()
+      const pickers = {
+        rekordbox: { title: 'Escolha o XML exportado pelo rekordbox (Arquivo → Exportar coleção em formato xml)', filters: [{ name: 'Coleção do rekordbox', extensions: ['xml'] }], properties: ['openFile'] },
+        traktor: { title: 'Escolha o collection.nml do Traktor', defaultPath: found.traktor, filters: [{ name: 'Coleção do Traktor', extensions: ['nml'] }], properties: ['openFile'] },
+        engine: { title: 'Escolha o m.db do Engine DJ (Engine Library/Database2)', defaultPath: found.engine, filters: [{ name: 'Banco do Engine DJ', extensions: ['db'] }], properties: ['openFile'] },
+        serato: { title: 'Escolha a pasta das músicas analisadas no Serato', defaultPath: found.serato || app.getPath('music'), properties: ['openDirectory'] },
+      }
+      const res = await dialog.showOpenDialog(mainWindow, pickers[source])
+      if (res.canceled || !res.filePaths[0]) return null
+      file = res.filePaths[0]
+    }
+    return loadLibrary(source, file)
+  })
 
   // ---------- Áudio de estúdio ----------
   const audioTools = new AudioTools(app.getPath('userData'), FFMPEG)

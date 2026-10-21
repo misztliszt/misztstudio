@@ -38,6 +38,8 @@ import {
   History as HistoryIcon,
   Settings,
   Radio,
+  Disc3,
+  Film,
 } from 'lucide-react'
 import type { Clip } from './types'
 import { defaultTransform } from './anim'
@@ -53,6 +55,8 @@ import { HistoryPanel } from './components/HistoryPanel'
 import { PreferencesDialog } from './components/PreferencesDialog'
 import { LiveMicDialog } from './components/LiveMicDialog'
 import { LibraryDialog } from './components/LibraryDialog'
+import { DjView } from './components/dj/DjView'
+import { DjMixer } from './dj'
 import { LiveVoice } from './live'
 import { buildKeymap, comboOf, shortcutLabel, type ShortcutId } from './shortcuts'
 import { ScreenRecordDialog } from './components/ScreenRecordDialog'
@@ -62,7 +66,7 @@ import type { ExportOptions } from './types'
 import { ContextMenu, type MenuItem, type MenuState } from './ui/ContextMenu'
 import { PlaybackEngine } from './engine'
 import { projectDuration, SPEED_RAMPS, uid, useProject, type Template } from './store'
-import type { AppSettings, ExportPayload, Media, ProbeResult, Project, UpdateStatus } from './types'
+import type { AppSettings, DjLibrary, ExportPayload, Media, ProbeResult, Project, UpdateStatus } from './types'
 import { colorMatrix } from './color'
 import { FRAME_ANIMATIONS, renderTextPng, renderTextSequence } from './text'
 import { MediaBin } from './components/MediaBin'
@@ -86,7 +90,7 @@ const errorText = (err: unknown) => String(err instanceof Error ? err.message : 
 export function App() {
   const { project, history, dispatch, undo, redo, checkpoint, jump, canUndo, canRedo } = useProject()
   const { toast, confirm } = useFeedback()
-  const [screen, setScreen] = useState<'loading' | 'welcome' | 'editor'>('loading')
+  const [screen, setScreen] = useState<'loading' | 'welcome' | 'editor' | 'dj'>('loading')
   const [showIntro, setShowIntro] = useState(true)
   const [recovery, setRecovery] = useState<{ json: string; savedAt: number } | null>(null)
   const [time, setTime] = useState(0)
@@ -111,6 +115,19 @@ export function App() {
   const live = useMemo(() => new LiveVoice(), [])
   const [liveOpen, setLiveOpen] = useState(false)
   const [liveOn, setLiveOn] = useState(false)
+  // Modo DJ: o mixer é criado na primeira vez e continua vivo ao voltar para o editor.
+  const djRef = useRef<DjMixer | null>(null)
+  const [djLibrary, setDjLibrary] = useState<DjLibrary | null>(null)
+  const openDj = () => {
+    setPlaying(false)
+    djRef.current ??= new DjMixer()
+    setScreen('dj')
+  }
+  const backToEditor = () => {
+    // Sem gravação em andamento, os decks param ao voltar para a edição.
+    if (djRef.current && !djRef.current.recording) for (const d of djRef.current.decks) d.pause()
+    setScreen('editor')
+  }
   useEffect(() => live.subscribe(() => setLiveOn(live.running)), [live])
   const shortcuts = settings?.shortcuts
   const key = useCallback((id: ShortcutId) => shortcutLabel(id, shortcuts), [shortcuts])
@@ -802,7 +819,7 @@ export function App() {
   }, [project.clips, project.tracks])
 
   useEffect(() => {
-    document.title = screen === 'editor' ? `${dirty ? '• ' : ''}${projectName} — Miszt Studio` : 'Miszt Studio'
+    document.title = screen === 'editor' || screen === 'dj' ? `${dirty ? '• ' : ''}${projectName} — Miszt Studio` : 'Miszt Studio'
   }, [screen, projectName, dirty])
 
   const selectClips = (ids: string[]) => {
@@ -824,7 +841,7 @@ export function App() {
 
   return (
     <div
-      className={`app ${screen !== 'editor' ? 'on-welcome' : ''} ${isWin ? 'win' : ''}`}
+      className={`app ${screen === 'welcome' || screen === 'loading' ? 'on-welcome' : ''} ${screen === 'dj' ? 'on-dj' : ''} ${isWin ? 'win' : ''}`}
       onDragOver={(e) => e.dataTransfer.types.includes('Files') && screen === 'editor' && e.preventDefault()}
       onDrop={async (e) => {
         if (!e.dataTransfer.files.length || screen !== 'editor') return
@@ -835,7 +852,7 @@ export function App() {
       <header className="titlebar">
         <div className="brand">
           <img src={logoUrl} alt="" />
-          {screen === 'editor' ? (
+          {screen === 'editor' || screen === 'dj' ? (
             <div className="project-title">
               <span className="project-name">{projectName}</span>
               <span className={`save-state ${dirty ? 'dirty' : ''}`}>{dirty ? 'Não salvo' : filePath ? 'Salvo' : ''}</span>
@@ -868,13 +885,38 @@ export function App() {
               <IconButton icon={MonitorPlay} label="Gravar tela" onClick={() => { setPlaying(false); setScreenOpen(true) }} />
               <IconButton icon={Radio} label="Microfone ao vivo (VRChat, Discord, lives)" onClick={() => setLiveOpen(true)} active={liveOn} />
             </div>
+            <div className="segmented small mode-switch">
+              <button className="active">
+                <Film size={13} /> Editor
+              </button>
+              <button onClick={openDj}>
+                <Disc3 size={13} /> DJ
+              </button>
+            </div>
             <div className="titlebar-drag" />
             <button className="btn primary export-btn" onClick={exportVideo} data-tip={key('export')}>
               <Upload size={15} strokeWidth={2.2} /> Exportar
             </button>
           </>
         )}
-        {screen !== 'editor' && <div className="titlebar-drag" />}
+        {screen === 'dj' && (
+          <>
+            <div className="tool-group">
+              <IconButton icon={Home} label="Início" onClick={goHome} />
+              <IconButton icon={Save} label="Salvar" shortcut={key('save')} onClick={() => save()} />
+            </div>
+            <div className="segmented small mode-switch">
+              <button onClick={backToEditor}>
+                <Film size={13} /> Editor
+              </button>
+              <button className="active">
+                <Disc3 size={13} /> DJ
+              </button>
+            </div>
+            <div className="titlebar-drag" />
+          </>
+        )}
+        {screen !== 'editor' && screen !== 'dj' && <div className="titlebar-drag" />}
         {liveOn && (
           <button className="live-pill" onClick={() => setLiveOpen(true)} data-tip="Microfone ao vivo ligado" data-tip-pos="bottom">
             <span className="rec-dot" /> AO VIVO
@@ -900,6 +942,8 @@ export function App() {
           }}
         />
       )}
+
+      {screen === 'dj' && djRef.current && <DjView mixer={djRef.current} project={project} dispatch={dispatch} library={djLibrary} onLibrary={setDjLibrary} />}
 
       {screen === 'editor' && (
         <>
