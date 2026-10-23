@@ -2,7 +2,7 @@
 // arquivos que a atualização automática lê (latest.yml e .blockmap).
 //
 // Uso: npm run dist && npm run release
-// Token: variável GH_TOKEN (ou GITHUB_TOKEN); sem ela, usa a credencial do GitHub já salva no Git.
+// Token: variável GH_TOKEN (ou GITHUB_TOKEN), o login do GitHub CLI (gh auth login) ou a credencial salva no Git.
 
 const fs = require('node:fs')
 const path = require('node:path')
@@ -24,6 +24,11 @@ function fail(msg) {
 
 function token() {
   if (process.env.GH_TOKEN || process.env.GITHUB_TOKEN) return process.env.GH_TOKEN || process.env.GITHUB_TOKEN
+  // Login do GitHub CLI (gh auth login). O token não é exibido.
+  for (const gh of ['gh', 'C:\\Program Files\\GitHub CLI\\gh.exe']) {
+    const r = spawnSync(gh, ['auth', 'token'], { encoding: 'utf8' })
+    if (r.status === 0 && r.stdout.trim()) return r.stdout.trim()
+  }
   // Credencial que o Git já usa para dar push (Git Credential Manager). Não é exibida.
   const r = spawnSync('git', ['credential', 'fill'], { input: 'protocol=https\nhost=github.com\n\n', encoding: 'utf8', cwd: root })
   const m = /^password=(.+)$/m.exec(r.stdout || '')
@@ -64,14 +69,14 @@ async function api(url, init, auth) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ tag_name: tag, target_commitish: 'main', name: `Miszt Studio ${version}`, body: notes() || `Miszt Studio ${version}`, draft: false, prerelease: false }),
-  })
+  }, auth)
 
   for (const a of assets) {
     const file = path.join(dir, a)
     const size = fs.statSync(file).size
     process.stdout.write(`Enviando ${a} (${(size / 1048576).toFixed(1)} MB)… `)
     const url = release.upload_url.replace(/\{.*\}$/, `?name=${encodeURIComponent(a)}`)
-    await api(url, { method: 'POST', headers: { 'Content-Type': a.endsWith('.yml') ? 'text/yaml' : 'application/octet-stream', 'Content-Length': String(size) }, body: fs.readFileSync(file) })
+    await api(url, { method: 'POST', headers: { 'Content-Type': a.endsWith('.yml') ? 'text/yaml' : 'application/octet-stream', 'Content-Length': String(size) }, body: fs.readFileSync(file) }, auth)
     console.log('ok')
   }
   console.log(`\n✔ Publicada: ${release.html_url}`)

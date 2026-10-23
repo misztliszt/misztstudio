@@ -4,7 +4,7 @@ Próximos passos combinados para o Miszt Studio. Marque com `[x]` ao concluir.
 
 ## Repositório
 
-- [ ] **Releases com o instalador**: publicar cada versão (ex.: v0.8.0) como Release do GitHub, com o `.exe` anexado e as novidades.
+- [x] **Releases com o instalador**: publicar cada versão (ex.: v0.8.0) como Release do GitHub, com o `.exe` anexado e as novidades.
 - [x] **Capturas de tela e GIF no README**: tela inicial, editor, mixer e a introdução animada.
 - [x] **Testes automatizados**: transformar em testes do projeto as verificações feitas durante o desenvolvimento (exportação, afinação e transposição, ripple, timeline magnética, rampa de velocidade, ducking, loudness).
 
