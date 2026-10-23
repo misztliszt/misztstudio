@@ -58,17 +58,30 @@ export function detectBeats(peaks: Float32Array): BeatGrid | null {
   const denom = a - 2 * b + c
   const period = bestLag + (denom !== 0 ? Math.max(-0.5, Math.min(0.5, (0.5 * (a - c)) / denom)) : 0)
 
-  let bestPhase = 0
-  let phaseScore = -Infinity
-  for (let ph = 0; ph < period; ph += 0.5) {
-    let s = 0
-    for (let t = ph; t < n; t += period) s += flux[Math.round(t)] ?? 0
-    if (s > phaseScore) {
-      phaseScore = s
-      bestPhase = ph
-    }
+  // Ajuste fino: com muitas batidas somadas, o período certo alinha todos os ataques.
+  // Procura em centésimos de quadro ao redor da estimativa (a envoltória tem 10 ms por quadro).
+  const at = (t: number) => {
+    const i = Math.floor(t)
+    const f = t - i
+    return (flux[i] ?? 0) * (1 - f) + (flux[i + 1] ?? 0) * f
   }
-  return { bpm: Math.round(((60 * PEAKS_PER_SECOND) / period) * 10) / 10, offset: bestPhase / PEAKS_PER_SECOND }
+  const comb = (per: number) => {
+    let best = -Infinity
+    let bestPh = 0
+    for (let ph = 0; ph < per; ph += 0.25) {
+      let s = 0
+      for (let t = ph; t < n - 1; t += per) s += at(t)
+      if (s > best) [best, bestPh] = [s, ph]
+    }
+    return { score: best, phase: bestPh }
+  }
+  let finePeriod = period
+  let fine = comb(period)
+  for (let per = period - 0.6; per <= period + 0.6; per += 0.01) {
+    const c = comb(per)
+    if (c.score > fine.score) [finePeriod, fine] = [per, c]
+  }
+  return { bpm: Math.round(((60 * PEAKS_PER_SECOND) / finePeriod) * 100) / 100, offset: fine.phase / PEAKS_PER_SECOND }
 }
 
 /** Instantes das batidas (s, na mídia) dentro de [from, to]. */

@@ -224,7 +224,7 @@ export function LiveMicDialog({ live, onClose }: Props) {
 
             <div className="live-tune-head">
               <h3>Noise gate</h3>
-              <span className={`gate-light ${!s.gate.enabled ? 'off' : running && gateOpen ? 'open' : 'closed'}`}>{!s.gate.enabled ? 'Desligado' : !running ? 'Pronto' : gateOpen ? 'Voz passando' : 'Silenciado'}</span>
+              <span className={`gate-light ${!s.gate.enabled || !running ? 'off' : gateOpen ? 'open' : 'closed'}`}>{!s.gate.enabled ? 'Desligado' : !running ? 'Pronto' : gateOpen ? 'Voz passando' : 'Silenciado'}</span>
               <Toggle checked={s.gate.enabled} onChange={(v) => update({ gate: { ...s.gate, enabled: v } })} />
             </div>
             <p className="hint left live-hint">Corta o microfone entre as frases: teclado, respiração e o barulho do ambiente não passam. Fale normalmente e suba o limiar até a luz ficar em “Silenciado” quando você para.</p>

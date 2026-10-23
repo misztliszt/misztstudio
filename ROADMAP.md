@@ -5,7 +5,7 @@ Próximos passos combinados para o Miszt Studio. Marque com `[x]` ao concluir.
 ## Repositório
 
 - [ ] **Releases com o instalador**: publicar cada versão (ex.: v0.8.0) como Release do GitHub, com o `.exe` anexado e as novidades.
-- [ ] **Capturas de tela e GIF no README**: tela inicial, editor, mixer e a introdução animada.
+- [x] **Capturas de tela e GIF no README**: tela inicial, editor, mixer e a introdução animada.
 - [x] **Testes automatizados**: transformar em testes do projeto as verificações feitas durante o desenvolvimento (exportação, afinação e transposição, ripple, timeline magnética, rampa de velocidade, ducking, loudness).
 
 ## Aplicativo
@@ -21,7 +21,7 @@ Próximos passos combinados para o Miszt Studio. Marque com `[x]` ao concluir.
 
 Tudo com código próprio. O REA só serve para entender os formatos dos arquivos da biblioteca do próprio usuário; não usamos código de outros programas (o Mixxx é GPL) nem abrimos o banco criptografado do rekordbox.
 
-- [ ] **Importar a biblioteca de DJ**: BPM, grid de batidas, tom e hot cues do rekordbox (XML exportado), Traktor (`collection.nml`), Serato (tags nos arquivos) e Engine DJ (SQLite), virando marcadores na timeline.
+- [x] **Importar a biblioteca de DJ**: BPM, grid de batidas, tom e hot cues do rekordbox (XML exportado), Traktor (`collection.nml`), Serato (tags nos arquivos) e Engine DJ (SQLite), virando marcadores na timeline.
 - [x] **Detecção de tom** com a roda Camelot (ex.: 4A) e sugestão de músicas compatíveis para mixagem harmônica.
-- [ ] **Dois decks**: crossfader, sincronia de BPM, loops, hot cues e EQ por deck, usando os stems já separados (voz, bateria, baixo…).
-- [ ] **Montar o set na timeline** e exportar a mixagem em MP3 ou WAV.
+- [x] **Dois decks**: crossfader, sincronia de BPM, loops, hot cues e EQ por deck, usando os stems já separados (voz, bateria, baixo…).
+- [x] **Montar o set na timeline** e exportar a mixagem em MP3 ou WAV.

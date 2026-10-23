@@ -1,7 +1,7 @@
 {
   "name": "miszt-studio",
   "productName": "Miszt Studio",
-  "version": "0.8.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Editor de vídeo com áudio de nível DAW",
   "author": "Miszt",

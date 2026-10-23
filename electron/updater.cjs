@@ -9,6 +9,13 @@ const { app } = require('electron')
  */
 function setupUpdater(getWindow, enabled) {
   let status = { state: app.isPackaged ? 'idle' : 'unavailable', version: null, progress: 0, error: null }
+  // Mensagens do electron-updater em português e sem detalhes técnicos.
+  const friendly = (err) => {
+    const msg = String((err && err.message) || err)
+    if (/\b404\b/.test(msg)) return 'nenhuma versão publicada foi encontrada no GitHub (o repositório precisa ser público e ter uma Release).'
+    if (/ENOTFOUND|ETIMEDOUT|ECONNREFUSED|net::/i.test(msg)) return 'sem conexão com o GitHub.'
+    return msg.split('\n')[0]
+  }
   const send = (patch) => {
     status = { ...status, ...patch }
     const win = getWindow()
@@ -27,13 +34,13 @@ function setupUpdater(getWindow, enabled) {
   autoUpdater.on('update-not-available', () => send({ state: 'latest' }))
   autoUpdater.on('download-progress', (p) => send({ state: 'downloading', progress: p.percent / 100 }))
   autoUpdater.on('update-downloaded', (info) => send({ state: 'ready', version: info.version, progress: 1 }))
-  autoUpdater.on('error', (err) => send({ state: 'error', error: String((err && err.message) || err).split('\n')[0] }))
+  autoUpdater.on('error', (err) => send({ state: 'error', error: friendly(err) }))
 
   const check = async () => {
     try {
       await autoUpdater.checkForUpdates()
     } catch (err) {
-      send({ state: 'error', error: String((err && err.message) || err).split('\n')[0] })
+      send({ state: 'error', error: friendly(err) })
     }
     return status
   }

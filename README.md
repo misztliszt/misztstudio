@@ -13,7 +13,19 @@
   <strong>Desenvolvido por Miszt</strong> · Windows · Software proprietário
 </p>
 
+<p align="center">
+  <img src="docs/introducao.gif" width="640" alt="Introdução animada do Miszt Studio" />
+</p>
+
 ---
+
+![Editor com timeline multitrilha, prévia e inspetor](docs/editor.png)
+
+| Modo DJ | Microfone ao vivo |
+|---|---|
+| ![Dois decks com sync, hot cues, loops e mixer](docs/dj.png) | ![Afinação, noise gate e efeitos em tempo real](docs/microfone-ao-vivo.png) |
+| **Biblioteca livre (Creative Commons)** | **Preferências** |
+| ![Busca de músicas e efeitos no Openverse](docs/biblioteca.png) | ![Pastas, prévia, atalhos e atualizações](docs/preferencias.png) |
 
 ## Recursos
 
@@ -44,19 +56,35 @@
 - **Ducking**: a música abaixa sozinha quando há voz.
 - **Detecção de batidas** (BPM) com ímã na timeline.
 - Automação de volume por pontos e fades.
-- **Limpar voz** (remoção de ruído leve, média ou forte).
+- **Limpar voz**: remoção de ruído leve, média ou forte, ou ajuste fino (redução, nível do ruído, graves, estalos) com prévia antes/depois.
+- **Detecção de tom** com a roda Camelot (ex.: Fá menor · 4A), aplicável na afinação da trilha.
+- **Biblioteca livre**: músicas e efeitos sonoros Creative Commons (Openverse), com créditos guardados para a descrição do vídeo.
 - **Gravar pelo microfone** com contagem regressiva, tocando a timeline junto.
 - **Plugins VST3** (ex.: MAutoPitch) com a interface do próprio plugin, via pedalboard.
+
+### Modo DJ
+- Dois decks com BPM e grade de batidas, **SYNC**, trava de tom, 8 hot cues, loops de ½ a 16 batidas e empurrão de andamento.
+- Mixer com EQ de 3 bandas (com corte), filtro, faders, crossfader e medidores.
+- **Stems ao vivo** (voz, bateria, baixo, outros) por deck, com a separação por IA.
+- Mixagem harmônica: tons na roda Camelot e aviso de compatibilidade entre os decks.
+- **Importa a sua biblioteca** do rekordbox (XML), Traktor (NML), Serato (tags) e Engine DJ, com BPM, tom, grade e hot cues.
+- **Gravar o set** direto para a timeline: áudio exato e/ou clipes editáveis por deck.
+
+### Ao vivo
+- **Microfone ao vivo** para VRChat, Discord e lives: afinação em tempo real, noise gate, EQ, compressor e reverb, com saída para o VB-CABLE e retorno nos fones.
 
 ### Exportação
 - Presets: YouTube 1080p e 4K, Reels/TikTok, arquivo mestre, rascunho, MP3 e WAV.
 - MP4 (H.264/H.265), MOV, WebM; resolução, fps e qualidade ajustáveis.
 - Normalização de volume para −14 LUFS e estimativa do tamanho do arquivo.
+- **Exportação em segundo plano** com fila: continue editando enquanto renderiza.
 
 ### Conforto
 - Introdução animada na abertura.
 - Tela inicial com modelos de projeto (YouTube, Reels/TikTok, quadrado, podcast, clipe musical) e projetos recentes.
-- Salvamento automático com recuperação, desfazer/refazer, marcadores e atalhos J/K/L.
+- Salvamento automático com recuperação, desfazer/refazer, **histórico visual** (Ctrl+H), marcadores e atalhos J/K/L.
+- **Preferências**: pastas, qualidade da prévia, proxies, atalhos personalizáveis.
+- **Atualização automática** pelas Releases do GitHub.
 
 ## Atalhos principais
 
@@ -107,6 +135,10 @@ npm run dist
 | `electron/stems.cjs`, `separate.py` | Separação de faixas com Demucs |
 | `electron/downloader.cjs` | Importação por link com yt-dlp |
 | `electron/audiotools.cjs`, `vst.py` | Limpeza de voz e plugins VST3 (pedalboard) |
+| `electron/djlibrary.cjs` | Leitura das bibliotecas rekordbox, Traktor, Serato e Engine DJ |
+| `electron/exportqueue.cjs`, `updater.cjs` | Fila de exportação e atualização automática |
+| `src/dj.ts`, `src/components/dj/` | Modo DJ (decks, mixer, gravação do set) |
+| `src/live.ts`, `src/dsp/gate.worklet.js` | Microfone ao vivo e noise gate |
 | `src/fx.ts` | Transições e efeitos (mesmas fórmulas na exportação) |
 | `src/bgremove.worker.ts` | Máscaras de recorte com MODNet |
 | `src/engine.ts`, `src/audio.ts` | Prévia: composição no canvas e grafo Web Audio |
