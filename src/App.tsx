@@ -56,6 +56,7 @@ import { PreferencesDialog } from './components/PreferencesDialog'
 import { LiveMicDialog } from './components/LiveMicDialog'
 import { LibraryDialog } from './components/LibraryDialog'
 import { DjView } from './components/dj/DjView'
+import { CleanDialog } from './components/CleanDialog'
 import { DjMixer } from './dj'
 import { LiveVoice } from './live'
 import { buildKeymap, comboOf, shortcutLabel, type ShortcutId } from './shortcuts'
@@ -66,7 +67,7 @@ import type { ExportOptions } from './types'
 import { ContextMenu, type MenuItem, type MenuState } from './ui/ContextMenu'
 import { PlaybackEngine } from './engine'
 import { projectDuration, SPEED_RAMPS, uid, useProject, type Template } from './store'
-import type { AppSettings, DjLibrary, ExportPayload, Media, ProbeResult, Project, UpdateStatus } from './types'
+import type { AppSettings, CleanOptions, DjLibrary, ExportPayload, Media, ProbeResult, Project, UpdateStatus } from './types'
 import { colorMatrix } from './color'
 import { FRAME_ANIMATIONS, renderTextPng, renderTextSequence } from './text'
 import { MediaBin } from './components/MediaBin'
@@ -103,6 +104,7 @@ export function App() {
   const [stemsClip, setStemsClip] = useState<string | null>(null)
   const [linkOpen, setLinkOpen] = useState(false)
   const [libraryOpen, setLibraryOpen] = useState(false)
+  const [cleanClip, setCleanClip] = useState<string | null>(null)
   const [bgClip, setBgClip] = useState<string | null>(null)
   const [filePath, setFilePath] = useState<string | null>(null)
   const [savedProject, setSavedProject] = useState<Project | null>(null)
@@ -390,7 +392,7 @@ export function App() {
   )
 
   const cleanVoice = useCallback(
-    async (clip: Clip, level: 'light' | 'medium' | 'strong') => {
+    async (clip: Clip, level: 'light' | 'medium' | 'strong' | CleanOptions) => {
       const media = clip.mediaId ? project.media[clip.mediaId] : undefined
       if (!media) return
       toast.info('Limpando a voz…', { duration: 2500 })
@@ -465,6 +467,7 @@ export function App() {
         { label: 'Leve', onClick: () => void cleanVoice(clip, 'light') },
         { label: 'Média', onClick: () => void cleanVoice(clip, 'medium') },
         { label: 'Forte', onClick: () => void cleanVoice(clip, 'strong') },
+        { label: 'Ajustar…', onClick: () => setCleanClip(clip.id) },
       ] })
       items.push({ label: 'Plugin VST3…', icon: Plug, onClick: () => setVstClip(clip.id) })
     }
@@ -982,7 +985,7 @@ export function App() {
               checkpoint={checkpoint}
               onSeek={seek}
               onDetectBeats={detectBeatsFor}
-              onAudioTool={(tool, clip) => (tool === 'vst' ? setVstClip(clip.id) : void cleanVoice(clip, tool))}
+              onAudioTool={(tool, clip) => (tool === 'vst' ? setVstClip(clip.id) : tool === 'custom' ? setCleanClip(clip.id) : void cleanVoice(clip, tool))}
               onVideoTool={(tool, clip) => (tool === 'freeze' ? void freezeFrame(clip) : tool === 'reverse' ? void reverseClip(clip) : setBgClip(clip.id))}
               onSeparate={(id) => {
                 setPlaying(false)
@@ -1181,6 +1184,24 @@ export function App() {
           onClose={() => setHistoryOpen(false)}
         />
       )}
+      {cleanClip &&
+        (() => {
+          const clip = project.clips.find((c) => c.id === cleanClip)
+          const media = clip?.mediaId ? project.media[clip.mediaId] : undefined
+          if (!clip || !media) return null
+          return (
+            <CleanDialog
+              clip={clip}
+              media={media}
+              time={time}
+              onClose={() => setCleanClip(null)}
+              onApply={(opts) => {
+                setCleanClip(null)
+                void cleanVoice(clip, opts)
+              }}
+            />
+          )
+        })()}
       {libraryOpen && (
         <LibraryDialog
           media={Object.values(project.media)}

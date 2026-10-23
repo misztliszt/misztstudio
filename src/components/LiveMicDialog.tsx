@@ -14,7 +14,7 @@ export function loadLive(): LiveSettings {
     if (raw) {
       const s = JSON.parse(raw) as Partial<LiveSettings>
       const d = defaultLive()
-      return { ...d, ...s, tune: { ...d.tune, ...s.tune }, eq: { ...d.eq, ...s.eq } }
+      return { ...d, ...s, tune: { ...d.tune, ...s.tune }, eq: { ...d.eq, ...s.eq }, gate: { ...d.gate, ...s.gate } }
     }
   } catch {
     // sem armazenamento: usa o padrão
@@ -51,6 +51,7 @@ export function LiveMicDialog({ live, onClose }: Props) {
   const [outputs, setOutputs] = useState<MediaDeviceInfo[]>([])
   const [levels, setLevels] = useState({ input: 0, output: 0 })
   const [reading, setReading] = useState<LiveReading | null>(null)
+  const [gateOpen, setGateOpen] = useState(false)
   const raf = useRef(0)
 
   const cable = outputs.find((d) => /cable input/i.test(d.label))
@@ -87,6 +88,7 @@ export function LiveMicDialog({ live, onClose }: Props) {
 
   useEffect(() => {
     live.onReading = setReading
+    live.onGate = setGateOpen
     const off = live.subscribe(() => setRunning(live.running))
     const tick = () => {
       setLevels((l) => {
@@ -99,6 +101,7 @@ export function LiveMicDialog({ live, onClose }: Props) {
     return () => {
       cancelAnimationFrame(raf.current)
       live.onReading = null
+      live.onGate = null
       off()
     }
   }, [live])
@@ -218,6 +221,20 @@ export function LiveMicDialog({ live, onClose }: Props) {
               />
             )}
             <Toggle checked={s.noiseSuppression} onChange={(v) => changeDevice({ noiseSuppression: v })} label="Redução de ruído do microfone" />
+
+            <div className="live-tune-head">
+              <h3>Noise gate</h3>
+              <span className={`gate-light ${!s.gate.enabled ? 'off' : running && gateOpen ? 'open' : 'closed'}`}>{!s.gate.enabled ? 'Desligado' : !running ? 'Pronto' : gateOpen ? 'Voz passando' : 'Silenciado'}</span>
+              <Toggle checked={s.gate.enabled} onChange={(v) => update({ gate: { ...s.gate, enabled: v } })} />
+            </div>
+            <p className="hint left live-hint">Corta o microfone entre as frases: teclado, respiração e o barulho do ambiente não passam. Fale normalmente e suba o limiar até a luz ficar em “Silenciado” quando você para.</p>
+            {s.gate.enabled && (
+              <>
+                <Slider label="Limiar (abre acima de)" value={s.gate.threshold} min={-80} max={-10} step={1} format={(v) => `${Math.round(v)} dB`} onChange={(v) => update({ gate: { ...s.gate, threshold: v } })} onReset={() => update({ gate: { ...s.gate, threshold: -45 } })} />
+                <Slider label="Quanto abaixa quando fecha" value={s.gate.range} min={-80} max={-6} step={1} format={(v) => (v <= -79 ? 'silêncio total' : `${Math.round(v)} dB`)} onChange={(v) => update({ gate: { ...s.gate, range: v } })} onReset={() => update({ gate: { ...s.gate, range: -60 } })} />
+                <Slider label="Tempo para fechar" value={s.gate.release} min={0.05} max={0.8} step={0.01} format={(v) => `${Math.round(v * 1000)} ms`} onChange={(v) => update({ gate: { ...s.gate, release: v } })} onReset={() => update({ gate: { ...s.gate, release: 0.18 } })} />
+              </>
+            )}
           </div>
 
           <div className="live-col">

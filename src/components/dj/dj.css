@@ -469,3 +469,56 @@
   gap: 10px;
   margin: 8px 0 4px;
 }
+
+/* Luz do noise gate (microfone ao vivo) */
+.gate-light {
+  margin-left: auto;
+  margin-right: 8px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--surface-3);
+  color: var(--text-3);
+}
+.gate-light.open {
+  background: rgba(52, 211, 153, 0.16);
+  color: var(--success);
+}
+.gate-light.closed {
+  background: rgba(242, 85, 90, 0.14);
+  color: #ff8a8e;
+}
+
+/* Limpar voz (ajuste fino) */
+.clean-dialog {
+  width: 480px;
+}
+.clean-sliders {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 14px;
+}
+.clean-sliders .hint {
+  margin: -2px 0 6px;
+  font-size: 11.5px;
+}
+.clean-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+}
+.clean-preview .dim {
+  flex: 1;
+  font-size: 12px;
+}
+.clean-preview .btn.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}

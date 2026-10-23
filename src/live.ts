@@ -3,6 +3,7 @@
 
 import coreUrl from './dsp/autotune-core.js?url'
 import workletUrl from './dsp/autotune.worklet.js?url'
+import gateUrl from './dsp/gate.worklet.js?url'
 import './dsp/reverb-ir.js'
 import type { ScaleName } from './types'
 
@@ -12,6 +13,8 @@ export interface LiveSettings {
   monitor: boolean
   monitorOutput: string
   noiseSuppression: boolean
+  /** Noise gate: fecha o som abaixo do limiar (dB) entre as frases. */
+  gate: { enabled: boolean; threshold: number; range: number; release: number }
   tune: { enabled: boolean; key: number; scale: ScaleName; speed: number; mix: number; transpose: number }
   eq: { low: number; mid: number; high: number }
   comp: boolean
@@ -25,6 +28,7 @@ export const defaultLive = (): LiveSettings => ({
   monitor: false,
   monitorOutput: 'default',
   noiseSuppression: false,
+  gate: { enabled: true, threshold: -45, range: -60, release: 0.18 },
   tune: { enabled: true, key: 0, scale: 'major', speed: 0.55, mix: 0.8, transpose: 0 },
   eq: { low: -2, mid: 0, high: 2 },
   comp: true,
@@ -43,6 +47,7 @@ export class LiveVoice {
   private nodes: {
     src: MediaStreamAudioSourceNode
     hp: BiquadFilterNode
+    gate: AudioWorkletNode
     tune: AudioWorkletNode
     low: BiquadFilterNode
     mid: BiquadFilterNode
@@ -59,6 +64,8 @@ export class LiveVoice {
   private buf = new Float32Array(1024)
   private current: LiveSettings | null = null
   onReading: ((r: LiveReading) => void) | null = null
+  /** Luz do gate: true quando a voz está passando. */
+  onGate: ((open: boolean) => void) | null = null
   private listeners = new Set<() => void>()
 
   /** Avisa quando liga ou desliga; devolve a função para cancelar. */
@@ -97,6 +104,7 @@ export class LiveVoice {
     try {
       await ctx.audioWorklet.addModule(coreUrl)
       await ctx.audioWorklet.addModule(workletUrl)
+      await ctx.audioWorklet.addModule(gateUrl)
       if (s.output !== 'default') await (ctx as AudioContext & { setSinkId(id: string): Promise<void> }).setSinkId(s.output)
     } catch (err) {
       stream.getTracks().forEach((t) => t.stop())
@@ -105,6 +113,7 @@ export class LiveVoice {
     }
     const src = ctx.createMediaStreamSource(stream)
     const hp = new BiquadFilterNode(ctx, { type: 'highpass', frequency: 80, Q: 0.7 })
+    const gate = new AudioWorkletNode(ctx, 'noise-gate', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] })
     const tune = new AudioWorkletNode(ctx, 'autotune', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2] })
     const low = new BiquadFilterNode(ctx, { type: 'lowshelf', frequency: 150 })
     const mid = new BiquadFilterNode(ctx, { type: 'peaking', frequency: 2500, Q: 0.8 })
@@ -125,17 +134,18 @@ export class LiveVoice {
     const monitorDest = ctx.createMediaStreamDestination()
 
     src.connect(inAnalyser)
-    src.connect(hp).connect(tune).connect(low).connect(mid).connect(high).connect(comp)
+    src.connect(hp).connect(gate).connect(tune).connect(low).connect(mid).connect(high).connect(comp)
     comp.connect(out)
     comp.connect(send).connect(convolver).connect(out)
     out.connect(analyser)
     out.connect(ctx.destination)
     out.connect(monitorDest)
     tune.port.onmessage = (e) => this.onReading?.(e.data as LiveReading)
+    gate.port.onmessage = (e) => this.onGate?.((e.data as { open: boolean }).open)
 
     this.ctx = ctx
     this.stream = stream
-    this.nodes = { src, hp, tune, low, mid, high, comp, send, convolver, out, analyser, inAnalyser, monitorDest }
+    this.nodes = { src, hp, gate, tune, low, mid, high, comp, send, convolver, out, analyser, inAnalyser, monitorDest }
     this.current = s
     this.apply(s)
     await this.setMonitor(s.monitor, s.monitorOutput)
@@ -152,6 +162,7 @@ export class LiveVoice {
     if (!n || !ctx) return
     const now = ctx.currentTime
     n.tune.port.postMessage({ ...s.tune })
+    n.gate.port.postMessage({ ...s.gate })
     n.low.gain.setTargetAtTime(s.eq.low, now, 0.02)
     n.mid.gain.setTargetAtTime(s.eq.mid, now, 0.02)
     n.high.gain.setTargetAtTime(s.eq.high, now, 0.02)

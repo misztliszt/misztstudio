@@ -10,9 +10,24 @@ const SCRIPT = path.join(__dirname, 'vst.py').replace('app.asar', 'app.asar.unpa
 
 /** Cadeias de limpeza de voz por intensidade (redução de ruído adaptativa + corte de graves). */
 const CLEAN = {
-  light: 'highpass=f=70,afftdn=nr=8:nf=-40:tn=1',
-  medium: 'highpass=f=80,afftdn=nr=14:nf=-35:tn=1,adeclick',
-  strong: 'highpass=f=90,afftdn=nr=24:nf=-30:tn=1,anlmdn=s=7:p=0.002:r=0.006,adeclick',
+  light: { reduction: 8, floor: -40, highpass: 70, deep: 0, declick: false },
+  medium: { reduction: 14, floor: -35, highpass: 80, deep: 0, declick: true },
+  strong: { reduction: 24, floor: -30, highpass: 90, deep: 7, declick: true },
+}
+
+/**
+ * Cadeia de limpeza do FFmpeg a partir dos ajustes:
+ * reduction = dB tirados do ruído (afftdn), floor = nível do ruído de fundo (dB),
+ * highpass = corte de graves (Hz, 0 = desligado), deep = força do redutor extra para
+ * ruídos que variam (anlmdn, 0 = desligado), declick = remove estalos.
+ */
+function cleanFilter(o) {
+  const parts = []
+  if (o.highpass > 0) parts.push(`highpass=f=${Math.round(o.highpass)}`)
+  if (o.reduction > 0) parts.push(`afftdn=nr=${Math.min(97, Math.max(0.01, o.reduction)).toFixed(1)}:nf=${Math.min(-20, Math.max(-80, o.floor)).toFixed(0)}:tn=1`)
+  if (o.deep > 0) parts.push(`anlmdn=s=${Math.min(20, Math.max(1, o.deep)).toFixed(1)}:p=0.002:r=0.006`)
+  if (o.declick) parts.push('adeclick')
+  return parts.join(',') || 'anull'
 }
 
 class AudioTools {
@@ -38,14 +53,16 @@ class AudioTools {
   }
 
   /** Remove ruído de fundo da voz. Devolve o caminho do WAV limpo. */
+  /** `level`: 'light' | 'medium' | 'strong' ou ajustes próprios ({ reduction, floor, highpass, deep, declick }). */
   async clean(filePath, inPoint, duration, level) {
     fs.mkdirSync(this.out, { recursive: true })
     const stat = fs.statSync(filePath)
-    const out = path.join(this.out, `clean-${this.key(filePath, stat.mtimeMs, inPoint, duration, level)}.wav`)
+    const opts = typeof level === 'string' ? CLEAN[level] || CLEAN.medium : { ...CLEAN.medium, ...level }
+    const out = path.join(this.out, `clean-${this.key(filePath, stat.mtimeMs, inPoint, duration, JSON.stringify(opts))}.wav`)
     if (!fs.existsSync(out)) {
       await this.helper.run(
         this.ffmpeg,
-        ['-y', '-hide_banner', '-loglevel', 'error', '-ss', inPoint.toFixed(3), '-t', duration.toFixed(3), '-i', filePath, '-vn', '-af', CLEAN[level] || CLEAN.medium, '-ac', '2', '-ar', '48000', '-c:a', 'pcm_s24le', out],
+        ['-y', '-hide_banner', '-loglevel', 'error', '-ss', inPoint.toFixed(3), '-t', duration.toFixed(3), '-i', filePath, '-vn', '-af', cleanFilter(opts), '-ac', '2', '-ar', '48000', '-c:a', 'pcm_s24le', out],
         () => {},
       )
     }
@@ -142,4 +159,4 @@ class AudioTools {
   }
 }
 
-module.exports = { AudioTools }
+module.exports = { AudioTools, cleanFilter, CLEAN }

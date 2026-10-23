@@ -53,7 +53,7 @@ interface Props {
   onSeek: (t: number) => void
   onDetectBeats: (mediaId: string) => void
   onVideoTool: (tool: 'freeze' | 'reverse' | 'bg', clip: Clip) => void
-  onAudioTool: (tool: 'light' | 'medium' | 'strong' | 'vst', clip: Clip) => void
+  onAudioTool: (tool: 'light' | 'medium' | 'strong' | 'custom' | 'vst', clip: Clip) => void
 }
 
 const RESOLUTIONS = [
@@ -206,6 +206,9 @@ function ClipInspector({ project, clip, time, dispatch, checkpoint, onSeparate, 
                           {label}
                         </button>
                       ))}
+                      <button onClick={() => onAudioTool('custom', clip)} data-tip="Ajuste fino, com prévia antes e depois">
+                        Ajustar…
+                      </button>
                     </div>
                   </div>
                   <button className="btn action-row" onClick={() => onAudioTool('vst', clip)}>

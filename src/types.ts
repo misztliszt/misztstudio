@@ -61,6 +61,19 @@ export interface DjLibrary {
   playlists: { name: string; trackIds: string[] }[]
 }
 
+/** Ajustes da limpeza de voz (remoção de ruído). */
+export interface CleanOptions {
+  /** dB tirados do ruído. */
+  reduction: number
+  /** Nível do ruído de fundo (dB): mais alto = mais som tratado como ruído. */
+  floor: number
+  /** Corte de graves (Hz), 0 = desligado. */
+  highpass: number
+  /** Redutor extra para ruídos que variam (0 = desligado). */
+  deep: number
+  declick: boolean
+}
+
 export interface MediaCredit {
   title: string
   creator: string | null
@@ -436,7 +449,7 @@ declare global {
       djLoad(source: DjSource, target?: string | null): Promise<DjLibrary | null>
       makeProxy(path: string): Promise<string>
       extractFrame(path: string, time: number): Promise<ProbeResult>
-      cleanAudio(path: string, inPoint: number, duration: number, level: 'light' | 'medium' | 'strong'): Promise<ProbeResult>
+      cleanAudio(path: string, inPoint: number, duration: number, level: 'light' | 'medium' | 'strong' | CleanOptions): Promise<ProbeResult>
       vstStatus(): Promise<{ installed: boolean; python: string | null }>
       vstInstall(): Promise<{ installed: boolean; python: string | null }>
       vstScan(): Promise<{ name: string; path: string; vendor: string }[]>
