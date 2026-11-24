@@ -120,7 +120,7 @@ export function TransformSection({ clip, time, dispatch, checkpoint, onSeek }: P
         <p className="hint">Arraste o clipe na prévia para mover; use os cantos para escalar e a alça de cima para girar.</p>
       </Section>
 
-      <Section title="Corte" icon={Crop} right={<button className="icon-btn" onClick={() => set({ transform: { ...clip.transform, crop: { left: 0, top: 0, right: 0, bottom: 0 } } })} data-tip="Sem corte" data-tip-pos="left"><RotateCcw size={13} /></button>}>
+      <Section title="Recorte" icon={Crop} right={<button className="icon-btn" onClick={() => set({ transform: { ...clip.transform, crop: { left: 0, top: 0, right: 0, bottom: 0 } } })} data-tip="Sem recorte" data-tip-pos="left"><RotateCcw size={13} /></button>}>
         <div className="field-grid">
           {(['left', 'right', 'top', 'bottom'] as const).map((side) => (
             <Slider

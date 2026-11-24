@@ -122,7 +122,7 @@ function ClipInspector({ project, clip, time, dispatch, checkpoint, onSeparate, 
           </div>
           {media && media.kind !== 'image' && (
             <div className="field">
-              <label>Corte inicial na mídia</label>
+              <label>Início na mídia</label>
               <span className="value mono">{formatTime(clip.in)}</span>
             </div>
           )}

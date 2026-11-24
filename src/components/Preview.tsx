@@ -81,7 +81,7 @@ export function Preview({ engine, project, selected, time, duration, playing, on
   return (
     <section className="panel preview">
       <div className="preview-stage">
-        <canvas ref={ref} className="preview-canvas" style={fit ?? { aspectRatio: `${width} / ${height}` }} onClick={onCanvasClick} onDoubleClick={onToggle} />
+        <canvas ref={ref} className="preview-canvas" style={fit ?? { aspectRatio: `${width} / ${height}` }} onClick={onCanvasClick} />
         {selected && !playing && rect.width > 0 && <TransformOverlay project={project} clip={selected} time={time} rect={rect} dispatch={dispatch} checkpoint={checkpoint} />}
       </div>
       <div

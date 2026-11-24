@@ -6,6 +6,9 @@ import { FeedbackProvider } from './ui/feedback'
 import { ErrorBoundary } from './ui/ErrorBoundary'
 import './styles.css'
 import './components/dj/dj.css'
+import { installA11y } from './ui/a11y'
+
+installA11y()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

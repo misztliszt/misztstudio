@@ -22,12 +22,17 @@ export function VstDialog({ clip, media, onDone, onClose }: Props) {
   const [line, setLine] = useState('')
   const [error, setError] = useState<string | null>(null)
 
+  const [scanning, setScanning] = useState(true)
   useEffect(() => {
-    void window.api.vstStatus().then(setStatus)
-    void window.api.vstScan().then((list) => {
-      setPlugins(list)
-      setPlugin((p) => p || list[0]?.path || '')
-    })
+    void window.api.vstStatus().then(setStatus).catch(() => undefined)
+    void window.api
+      .vstScan()
+      .then((list) => {
+        setPlugins(list)
+        setPlugin((p) => p || list[0]?.path || '')
+      })
+      .catch((err) => setError(errorText(err)))
+      .finally(() => setScanning(false))
     return window.api.onVstProgress((m) => setLine(`${m.stage}${m.line ? ` · ${m.line}` : ''}`))
   }, [])
 
@@ -69,7 +74,9 @@ export function VstDialog({ clip, media, onDone, onClose }: Props) {
 
         {status?.installed && (
           <>
-            {plugins.length === 0 ? (
+            {scanning ? (
+              <p className="hint left">Procurando plugins VST3…</p>
+            ) : plugins.length === 0 ? (
               <p className="hint left">Nenhum plugin VST3 encontrado em Arquivos de Programas\Arquivos Comuns\VST3.</p>
             ) : (
               <div className="stack">

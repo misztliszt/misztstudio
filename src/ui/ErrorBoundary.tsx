@@ -14,7 +14,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { error: E
       <div className="crash">
         <div className="crash-card">
           <h1>Algo deu errado</h1>
-          <p>A interface encontrou um erro inesperado. O autosave guarda seu projeto a cada 20 segundos; ao reabrir, você poderá recuperá-lo.</p>
+          <p>A interface encontrou um erro inesperado. O salvamento automático guarda uma cópia do seu projeto; ao reabrir, você poderá recuperá-la.</p>
           <pre>{this.state.error.message}</pre>
           <button className="btn primary" onClick={() => location.reload()}>
             Recarregar o editor

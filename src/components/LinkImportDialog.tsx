@@ -155,7 +155,7 @@ export function LinkImportDialog({ onDone, onClose }: Props) {
                     setUrl(e.target.value)
                     setError(null)
                   }}
-                  onKeyDown={(e) => e.key === 'Enter' && lookup()}
+                  onKeyDown={(e) => e.key === 'Enter' && !busy && lookup()}
                 />
               </div>
               <button className="btn" onClick={lookup} disabled={!!busy || !url.trim()}>

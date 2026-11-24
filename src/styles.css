@@ -15,7 +15,7 @@
   /* Texto */
   --text: #eceef3;
   --text-2: #a3a9b7;
-  --text-3: #6c7282;
+  --text-3: #8a90a0;
 
   /* Marca: degradê do ícone */
   --accent: #2bd3c0;
@@ -60,6 +60,17 @@ body,
 #root {
   height: 100%;
   margin: 0;
+}
+
+.error,
+.toast,
+.caption-status,
+.hint,
+.modal p,
+.credits,
+textarea,
+input {
+  user-select: text;
 }
 
 body {
@@ -346,7 +357,7 @@ button {
 [data-tip] {
   position: relative;
 }
-[data-tip]:hover::after {
+[data-tip]:is(:hover, :focus-visible)::after {
   content: attr(data-tip);
   position: absolute;
   z-index: 50;
@@ -365,16 +376,16 @@ button {
   pointer-events: none;
   animation: tip-in 0.12s 0.35s both var(--ease);
 }
-[data-tip-pos='top']:hover::after {
+[data-tip-pos='top']:is(:hover, :focus-visible)::after {
   top: auto;
   bottom: calc(100% + 8px);
 }
-[data-tip-pos='right']:hover::after {
+[data-tip-pos='right']:is(:hover, :focus-visible)::after {
   left: calc(100% + 8px);
   top: 50%;
   transform: translateY(-50%);
 }
-[data-tip-pos='left']:hover::after {
+[data-tip-pos='left']:is(:hover, :focus-visible)::after {
   left: auto;
   right: calc(100% + 8px);
   top: 50%;
@@ -1146,6 +1157,7 @@ button {
 
 /* Switch */
 .switch {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -1153,8 +1165,18 @@ button {
   font-size: 12px;
   color: var(--text-2);
 }
+/* Escondido só visualmente: continua no foco do teclado e na árvore de acessibilidade. */
 .switch input {
-  display: none;
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  pointer-events: none;
+}
+.switch input:focus-visible + .track {
+  outline: 2px solid var(--accent, #2bd3c0);
+  outline-offset: 2px;
 }
 .switch .track {
   width: 30px;

@@ -40,6 +40,24 @@ export function Knob({ label, value, min, max, center, onChange, format, size = 
   return (
     <div className="knob" title={`${label}: ${format ? format(value) : value.toFixed(1)}`}>
       <svg
+        role="slider"
+        tabIndex={0}
+        aria-label={label}
+        aria-valuemin={min}
+        aria-valuemax={max}
+        aria-valuenow={Number(value.toFixed(3))}
+        aria-valuetext={format ? format(value) : value.toFixed(1)}
+        onKeyDown={(e) => {
+          // Setas: ajuste de 2% da faixa (Shift: 10%); Home/End vão aos extremos; Delete/Backspace voltam ao centro.
+          const step = (max - min) * (e.shiftKey ? 0.1 : 0.02)
+          if (e.key === 'ArrowUp' || e.key === 'ArrowRight') set(value + step)
+          else if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') set(value - step)
+          else if (e.key === 'Home') set(min)
+          else if (e.key === 'End') set(max)
+          else if (e.key === 'Delete' || e.key === 'Backspace') set(mid)
+          else return
+          e.preventDefault()
+        }}
         width={size}
         height={size}
         onPointerDown={(e) => {
@@ -53,6 +71,8 @@ export function Knob({ label, value, min, max, center, onChange, format, size = 
           set(fromAngle(startAngle + ((drag.current.y - e.clientY) / (e.shiftKey ? 600 : 150)) * 270))
         }}
         onPointerUp={() => (drag.current = null)}
+        onPointerCancel={() => (drag.current = null)}
+        onLostPointerCapture={() => (drag.current = null)}
         onDoubleClick={() => set(mid)}
         onWheel={(e) => set(fromAngle(angle - Math.sign(e.deltaY) * 5.4))}
       >

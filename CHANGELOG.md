@@ -1,5 +1,25 @@
 # Novidades
 
+## 1.2.0
+
+**Acessibilidade**
+- Todos os diálogos agora são anunciados como diálogos (com título), levam o foco para dentro, prendem o Tab, fecham com Esc (pelo botão Fechar/Cancelar, respeitando quando ele está desabilitado) e devolvem o foco ao fechar.
+- Os interruptores (liga/desliga) funcionam pelo teclado e são anunciados como interruptores; knobs do Modo DJ são ajustáveis pelas setas, Home/End e Delete.
+- Controles deslizantes, listas e campos numéricos ganharam nome acessível; botões só de ícone usam a dica como nome; as dicas também aparecem ao focar com o teclado.
+- Menus de contexto marcados como menus; seletores de opção (fps, escala, qualidade) deixaram de se anunciar como abas.
+- O texto de dicas e rótulos secundários ficou mais claro (melhor contraste); mensagens de erro e avisos agora podem ser selecionadas e copiadas.
+
+**Interface**
+- Clicar duas vezes na prévia não alterna mais a reprodução três vezes.
+- O tempo exibido não erra mais o décimo de segundo (ex.: 2,3 s aparecia como 2,2).
+- "Corte" (crop) virou "Recorte" e "Corte inicial na mídia" virou "Início na mídia", para não confundir com cortar o clipe.
+- Biblioteca livre: uma busca antiga não sobrescreve mais a mais nova; "Carregar mais" continua a busca feita; erro ao adicionar um som agora aparece.
+- Plugins VST3 mostram "Procurando plugins…" em vez de "nenhum plugin" enquanto a busca roda; limpar voz não toca nada depois de fechar o diálogo; importar por link não consulta duas vezes ao apertar Enter.
+- A tela de erro não cita mais um intervalo fixo de salvamento automático.
+
+**Projeto**
+- Documentos do projeto: PROJETO.md, RISCOS.md e CLAUDE.md.
+
 ## 1.1.0
 
 **Desempenho**
