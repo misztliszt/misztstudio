@@ -65,6 +65,14 @@ export function CleanDialog({ clip, media, time, onApply, onClose }: Props) {
     setPlaying(null)
   }
   useEffect(() => stop, [])
+  // Fechou o diálogo enquanto a prévia limpa era gerada: não toca nada depois.
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
 
   const play = async (which: 'original' | 'clean') => {
     stop()
@@ -90,6 +98,7 @@ export function CleanDialog({ clip, media, time, onApply, onClose }: Props) {
       url = p.url
       start = 0
     }
+    if (!mounted.current) return
     const el = new Audio(url)
     el.currentTime = start
     const end = start + segLen

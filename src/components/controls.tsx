@@ -1,4 +1,4 @@
-import { useRef, useState, type ComponentType, type ReactNode } from 'react'
+import { useId, useRef, useState, type ComponentType, type ReactNode } from 'react'
 import { ChevronDown, type LucideProps } from 'lucide-react'
 
 type Icon = ComponentType<LucideProps>
@@ -32,6 +32,7 @@ export function Slider({
   bipolar?: boolean
 }) {
   const [editing, setEditing] = useState(false)
+  const id = useId()
   const pos = ((value - min) / (max - min)) * 100
   const zero = bipolar ? ((0 - min) / (max - min)) * 100 : 0
   const from = Math.min(pos, zero)
@@ -39,7 +40,7 @@ export function Slider({
   return (
     <div className="slider">
       <div className="slider-head">
-        <label>{label}</label>
+        <label htmlFor={id}>{label}</label>
         {editing ? (
           <input
             className="slider-edit"
@@ -68,6 +69,8 @@ export function Slider({
         )}
       </div>
       <input
+        id={id}
+        aria-valuetext={format(value)}
         type="range"
         className="range"
         min={min}
@@ -162,15 +165,19 @@ export function Select<T extends string | number>({
   options,
   onChange,
   disabled,
+  ariaLabel,
 }: {
   value: T
   options: { value: T; label: string }[]
   onChange: (v: T) => void
   disabled?: boolean
+  /** Nome para leitores de tela (quando o rótulo visível não está ligado ao campo). */
+  ariaLabel?: string
 }) {
   return (
     <div className={`select ${disabled ? 'disabled' : ''}`}>
       <select
+        aria-label={ariaLabel}
         value={String(value)}
         disabled={disabled}
         onChange={(e) => {
@@ -207,7 +214,7 @@ export function Section({ title, children, right, icon: IconC }: { title: string
 export function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label?: string }) {
   return (
     <label className="switch">
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      <input type="checkbox" role="switch" aria-label={label} checked={checked} onChange={(e) => onChange(e.target.checked)} />
       <span className="track" />
       {label && <span>{label}</span>}
     </label>
@@ -255,9 +262,9 @@ export function IconButton({
 
 export function Segmented<T extends string>({ value, options, onChange }: { value: T; options: { value: T; label: string; icon?: Icon }[]; onChange: (v: T) => void }) {
   return (
-    <div className="segmented" role="tablist">
+    <div className="segmented" role="radiogroup">
       {options.map((o) => (
-        <button key={o.value} role="tab" aria-selected={value === o.value} className={value === o.value ? 'active' : ''} onClick={() => onChange(o.value)}>
+        <button key={o.value} role="radio" aria-checked={value === o.value} className={value === o.value ? 'active' : ''} onClick={() => onChange(o.value)}>
           {o.icon && <o.icon size={14} strokeWidth={2} />}
           {o.label}
         </button>

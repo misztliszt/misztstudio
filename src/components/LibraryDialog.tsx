@@ -67,19 +67,26 @@ export function LibraryDialog({ media, onAdd, onClose }: Props) {
     [],
   )
 
+  // Cada busca ganha um número: uma resposta atrasada de uma busca antiga não sobrescreve a mais nova.
+  const requestId = useRef(0)
+  /** O texto da última busca feita: "Carregar mais" continua essa busca, mesmo se o campo foi editado depois. */
+  const lastQuery = useRef('')
   const search = async (query = q, nextPage = 1) => {
     if (!query.trim()) return
+    const mine = ++requestId.current
+    if (nextPage === 1) lastQuery.current = query.trim()
     setBusy(true)
     setError(null)
     try {
       const r = await window.api.librarySearch({ q: query.trim(), category, commercial, page: nextPage })
+      if (mine !== requestId.current) return
       setItems((cur) => (nextPage > 1 && cur ? [...cur, ...r.items] : r.items))
       setPage(nextPage)
       setPages(r.pages)
     } catch (err) {
-      setError(errorText(err))
+      if (mine === requestId.current) setError(errorText(err))
     } finally {
-      setBusy(false)
+      if (mine === requestId.current) setBusy(false)
     }
   }
   // Refaz a busca ao trocar de categoria ou de filtro de licença.
@@ -114,6 +121,7 @@ export function LibraryDialog({ media, onAdd, onClose }: Props) {
       const r = await window.api.libraryDownload(item)
       onAdd(r, creditOf(item))
       if (r.ok) setAdded((s) => new Set(s).add(item.id))
+      else setError(r.error)
     } catch (err) {
       setError(errorText(err))
     } finally {
@@ -226,7 +234,7 @@ export function LibraryDialog({ media, onAdd, onClose }: Props) {
                   )
                 })}
                 {page < pages && (
-                  <button className="btn ghost small library-more" onClick={() => void search(q, page + 1)} disabled={busy}>
+                  <button className="btn ghost small library-more" onClick={() => void search(lastQuery.current || q, page + 1)} disabled={busy}>
                     {busy ? 'Carregando…' : 'Carregar mais'}
                   </button>
                 )}
