@@ -1,13 +1,12 @@
 # Riscos do Miszt Studio
 
-Última revisão geral: 2026-11-24 (auditoria completa em 5 lotes; versões 1.0.1 a 1.2.0).
+Última revisão geral: 2026-11-24 (auditoria completa em 5 lotes; versões 1.0.1 a 1.2.1).
 Escala: probabilidade e impacto em **B**aixa, **M**édia ou **A**lta.
 
 ## Abertos
 
 | # | Risco | Prob. | Impacto | Ação | Responsável | Revisão |
 |---|---|---|---|---|---|---|
-| 1 | **Electron 33 fora da janela de suporte de segurança** do Chromium (a versão atual é a 45). O app abre links e importa por URL. | M | A | Atualizar o Electron e fixar a versão exata; testar instalador, worklets e atualizador depois. Pendente de confirmação do dono. | Gabriel | 2026-11-24 |
 | 2 | **Cadeia de atualização depende só da conta do GitHub**: instalador sem assinatura e `scripts/release.cjs` publica a Release já visível antes de subir todos os arquivos. | B | A | Token com escopo mínimo e 2FA; criar a Release como rascunho e publicar só no fim; Electron Fuses. Pendente de confirmação. | Gabriel | 2026-11-24 |
 | 3 | **Dependências Python sem versão fixa** (torch, demucs, pedalboard) instaladas na pasta de dados do usuário. | M | M | Fixar versões e hashes; limitar a versão máxima do Python. | Gabriel | 2026-11-24 |
 | 4 | **CSP libera `cdn.jsdelivr.net`** em `script-src` (provavelmente para o onnxruntime/transformers). | B | M | Empacotar os arquivos do onnxruntime localmente e remover o CDN da política. | Gabriel | 2026-11-24 |
@@ -23,6 +22,7 @@ Escala: probabilidade e impacto em **B**aixa, **M**édia ou **A**lta.
 
 ## Fechados na auditoria
 
+- Electron 33 sem suporte: atualizado para o 45.5.0, com versão fixada (1.2.1).
 - Perda de dados por gravação não atômica, fechar sem salvar, `.edproj` inválido e mídia movida (1.0.1).
 - Leitura de arquivos arbitrários pelo `media://`, IPC sem validação, injeção de opções no yt-dlp, filtros do FFmpeg alimentados por dados do projeto, carga de plugins arbitrários (1.0.2).
 - Processos órfãos ao sair, instância duplicada, corridas no microfone ao vivo, desafino do autotune, estouro no master do DJ (1.0.3).

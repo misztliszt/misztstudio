@@ -8,7 +8,7 @@ Editor de vídeo para Windows com áudio de nível DAW (mixer, afinação, separ
 
 ## Stack
 
-- **Electron 33** (processo principal em CommonJS, `electron/*.cjs`) + **React 18 + TypeScript + Vite** (`src/`).
+- **Electron 45.5.0** (versão fixada; Chromium 156, Node 24) (processo principal em CommonJS, `electron/*.cjs`) + **React 18 + TypeScript + Vite** (`src/`).
 - FFmpeg/FFprobe via `ffmpeg-static`/`ffprobe-static`; yt-dlp, Demucs (Python), pedalboard (Python) instalados sob demanda na pasta de dados.
 - Testes: **Vitest** (`tests/`). Não há ESLint no projeto.
 
