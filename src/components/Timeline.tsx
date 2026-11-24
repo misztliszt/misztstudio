@@ -183,12 +183,16 @@ export function Timeline({ project, time, zoom, selection, selectedTrack, onSele
         dispatch({ type: 'updateClip', id: clip.id, patch: { duration: Math.min(max, Math.max(0.1, end - clip.start)) } }, true)
       }
     }
+    // Os ouvintes ficam na janela: ao cruzar para outra trilha o React recria o clipe naquela linha,
+    // e ouvintes presos ao elemento antigo parariam de receber o arrasto.
     const onUp = () => {
-      target.removeEventListener('pointermove', onMove)
-      target.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
     }
-    target.addEventListener('pointermove', onMove)
-    target.addEventListener('pointerup', onUp)
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
   }
 
   const onLaneDrop = (e: React.DragEvent<HTMLDivElement>, track: Track) => {

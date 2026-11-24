@@ -42,6 +42,7 @@ import {
   Film,
 } from 'lucide-react'
 import type { Clip } from './types'
+import { parseProjectJson } from './projectFile'
 import { defaultTransform } from './anim'
 import { clock } from './clock'
 import { ExportDialog } from './components/ExportDialog'
@@ -94,6 +95,8 @@ export function App() {
   const [screen, setScreen] = useState<'loading' | 'welcome' | 'editor' | 'dj'>('loading')
   const [showIntro, setShowIntro] = useState(true)
   const [recovery, setRecovery] = useState<{ json: string; savedAt: number } | null>(null)
+  /** Mídias do projeto cujo arquivo não existe mais no disco (movido ou apagado). */
+  const [missingMedia, setMissingMedia] = useState<Set<string>>(new Set())
   const [time, setTime] = useState(0)
   const [playing, setPlaying] = useState(false)
   const [selection, setSelection] = useState<string[]>([])
@@ -509,6 +512,7 @@ export function App() {
     e.preventDefault()
     const items: MenuItem[] = [{ label: 'Adicionar no cursor', icon: Plus, onClick: () => dispatch({ type: 'addClip', mediaId: media.id, start: time }) }]
     if (media.kind === 'video' && !media.proxy && proxyProgress[media.path] === undefined) items.push({ label: 'Gerar proxy', icon: Zap, onClick: () => requestProxy(media) })
+    if (missingMedia.has(media.id)) items.unshift({ label: 'Localizar arquivo…', icon: FolderOpen, onClick: () => void relinkMedia(media.id) })
     items.push(
       { label: 'Mostrar na pasta', icon: FolderOpen, onClick: () => void window.api.showInFolder(media.path) },
       { separator: true },
@@ -533,16 +537,25 @@ export function App() {
 
   const save = useCallback(
     async (saveAs = false) => {
-      const target = await window.api.saveProject(JSON.stringify(project, null, 2), saveAs ? null : filePath)
-      if (target) {
-        setFilePath(target)
-        setSavedProject(project)
-        void window.api.autosave(null)
-        toast.success('Projeto salvo', { detail: target, duration: 2500 })
+      try {
+        const target = await window.api.saveProject(JSON.stringify(project, null, 2), saveAs ? null : filePath)
+        if (target) {
+          setFilePath(target)
+          setSavedProject(project)
+          void window.api.autosave(null)
+          toast.success('Projeto salvo', { detail: target, duration: 2500 })
+        }
+      } catch (err) {
+        toast.error('Não foi possível salvar o projeto', { detail: errorText(err) })
       }
     },
     [project, filePath, toast],
   )
+
+  // Avisa o programa se há alterações não salvas (ele pergunta antes de fechar a janela).
+  useEffect(() => {
+    void window.api.setDirty(dirty).catch(() => undefined)
+  }, [dirty])
 
   // O projeto normalizado só existe depois do `load`; marca-o como salvo nesse momento.
   const markSaved = useRef(false)
@@ -567,10 +580,40 @@ export function App() {
     [dispatch, seek],
   )
 
-  const parseProject = (json: string) => {
-    const p = JSON.parse(json) as Project
-    if (p.version !== 1 || !Array.isArray(p.tracks)) throw new Error('Arquivo de projeto inválido')
-    return p
+  /** Confere o arquivo, abre o projeto e avisa de clipes descartados e de mídia que não está mais no disco. */
+  const openJson = (json: string, path: string | null, saved: boolean) => {
+    const { project: loaded, dropped } = parseProjectJson(json)
+    loadProject(loaded, path, saved)
+    if (dropped > 0) toast.warning(dropped === 1 ? 'Um clipe inválido foi descartado' : `${dropped} clipes inválidos foram descartados`, { detail: 'O arquivo do projeto tinha clipes sem trilha, sem mídia ou com tempos quebrados.' })
+    const list = Object.values(loaded.media).filter((m) => m.path)
+    void window.api
+      .mediaExists(list.map((m) => m.path))
+      .then((exists) => {
+        const gone = list.filter((_, i) => !exists[i])
+        setMissingMedia(new Set(gone.map((m) => m.id)))
+        if (gone.length) toast.warning(gone.length === 1 ? 'Uma mídia não foi encontrada' : `${gone.length} mídias não foram encontradas`, { detail: `${gone.map((m) => m.name).join(', ')}. Clique com o botão direito na mídia e use “Localizar arquivo…”.`, duration: 9000 })
+      })
+      .catch(() => undefined)
+  }
+
+  /** Aponta uma mídia ausente para o arquivo escolhido pelo usuário. */
+  const relinkMedia = async (mediaId: string) => {
+    const old = project.media[mediaId]
+    if (!old) return
+    const [res] = await window.api.importMedia()
+    if (!res) return
+    if (!res.ok) {
+      toast.error('Não foi possível usar esse arquivo', { detail: res.error })
+      return
+    }
+    const fresh = res.media
+    dispatch({ type: 'updateMedia', id: mediaId, patch: { ...fresh, proxy: null, beats: old.beats, key: old.key, cues: old.cues, credit: old.credit } })
+    setMissingMedia((s) => {
+      const next = new Set(s)
+      next.delete(mediaId)
+      return next
+    })
+    toast.success('Mídia localizada', { detail: res.media.name })
   }
 
   /** Pergunta antes de descartar alterações não salvas. */
@@ -584,7 +627,7 @@ export function App() {
     const res = await window.api.openProject()
     if (!res) return
     try {
-      loadProject(parseProject(res.json), res.filePath, true)
+      openJson(res.json, res.filePath, true)
     } catch (err) {
       toast.error('Não foi possível abrir o projeto', { detail: errorText(err) })
     }
@@ -594,7 +637,7 @@ export function App() {
     if (!(await canDiscard())) return
     try {
       const res = await window.api.openProjectPath(path)
-      loadProject(parseProject(res.json), res.filePath, true)
+      openJson(res.json, res.filePath, true)
     } catch (err) {
       toast.error('Não foi possível abrir o projeto', { detail: errorText(err) })
     }
@@ -615,7 +658,7 @@ export function App() {
       if (!alive) return
       if (initial) {
         try {
-          loadProject(parseProject(initial.json), initial.filePath, true)
+          openJson(initial.json, initial.filePath, true)
           return
         } catch (err) {
           toast.error('Não foi possível abrir o projeto', { detail: errorText(err) })
@@ -635,7 +678,7 @@ export function App() {
   const recover = () => {
     if (!recovery) return
     try {
-      loadProject(parseProject(recovery.json), null, false)
+      openJson(recovery.json, null, false)
       toast.info('Projeto recuperado', { detail: 'Salve-o para não perder as alterações.' })
     } catch {
       toast.error('O arquivo de recuperação está corrompido')
@@ -683,10 +726,17 @@ export function App() {
   const runExport = async (options: ExportOptions) => {
     setExportOpen(false)
     const payload: ExportPayload = { project, textImages: {}, colorMatrices: {}, textSequences: {}, options }
-    for (const c of project.clips) {
-      if (c.text && FRAME_ANIMATIONS.has(c.text.animation)) payload.textSequences![c.id] = renderTextSequence(c.text, project.width, project.height, c.duration, project.fps)
-      else if (c.text) payload.textImages[c.id] = renderTextPng(c.text, project.width, project.height)
-      else if (c.color.saturation !== 1 || c.color.hue !== 0 || c.color.sepia !== 0) payload.colorMatrices[c.id] = colorMatrix(c.color)
+    const animated = project.clips.filter((c) => c.text && FRAME_ANIMATIONS.has(c.text.animation)).length
+    if (animated > 3) toast.info('Preparando as legendas animadas…', { detail: `${animated} legendas; a janela continua livre.`, duration: 5000 })
+    try {
+      for (const c of project.clips) {
+        if (c.text && FRAME_ANIMATIONS.has(c.text.animation)) payload.textSequences![c.id] = await renderTextSequence(c.text, project.width, project.height, c.duration, project.fps)
+        else if (c.text) payload.textImages[c.id] = renderTextPng(c.text, project.width, project.height)
+        else if (c.color.saturation !== 1 || c.color.hue !== 0 || c.color.sepia !== 0) payload.colorMatrices[c.id] = colorMatrix(c.color)
+      }
+    } catch (err) {
+      toast.error('Não foi possível preparar o texto da exportação', { detail: errorText(err).slice(0, 300) })
+      return
     }
     try {
       const job = await window.api.exportVideo(payload)
@@ -939,7 +989,8 @@ export function App() {
           onOpen={open}
           onOpenRecent={openRecent}
           onRecover={recover}
-          onDiscardRecovery={() => {
+          onDiscardRecovery={async () => {
+            if (!(await confirm({ title: 'Descartar a cópia de recuperação?', message: 'É a única cópia do trabalho que não foi salvo. Ela será apagada.', confirmLabel: 'Descartar', danger: true }))) return
             setRecovery(null)
             void window.api.autosave(null)
           }}
@@ -953,6 +1004,7 @@ export function App() {
           <main className="workspace">
             <MediaBin
               media={Object.values(project.media)}
+              missing={missingMedia}
               proxyProgress={proxyProgress}
               onImport={importMedia}
               onAdd={(mediaId) => dispatch({ type: 'addClip', mediaId, start: time })}

@@ -77,13 +77,18 @@ class ExportQueue {
     job.startedAt = Date.now()
     this.emit()
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'miszt-studio-export-'))
+    // Grava num arquivo provisório (mesma extensão, para o FFmpeg reconhecer o formato) e só troca
+    // pelo destino no fim: uma falha ou cancelamento nunca apaga um arquivo que já existia.
+    const parsed = path.parse(job.outPath)
+    const partPath = path.join(parsed.dir, `.${parsed.name}.parcial${parsed.ext}`)
     try {
-      const { args, total } = await prepareExport(job.payload, job.outPath, { workDir, runFfmpeg: (a) => this.run(job, a, 0) })
+      const { args, total } = await prepareExport(job.payload, partPath, { workDir, runFfmpeg: (a) => this.run(job, a, 0) })
       await this.run(job, args, total)
+      fs.renameSync(partPath, job.outPath)
       job.state = 'done'
       job.progress = 1
     } catch (err) {
-      fs.rmSync(job.outPath, { force: true })
+      fs.rmSync(partPath, { force: true })
       if (job.cancel) job.state = 'canceled'
       else {
         job.state = 'error'

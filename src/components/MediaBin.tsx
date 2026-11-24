@@ -5,6 +5,8 @@ import { formatTime } from '../format'
 
 interface Props {
   media: Media[]
+  /** Mídias cujo arquivo não foi encontrado no disco. */
+  missing?: Set<string>
   proxyProgress: Record<string, number>
   onImport: () => void
   onAdd: (mediaId: string) => void
@@ -18,7 +20,7 @@ interface Props {
 const KIND_ICON = { video: Film, audio: Music, image: ImageIcon }
 type Filter = 'all' | 'video' | 'audio' | 'image'
 
-export function MediaBin({ media, proxyProgress, onImport, onAdd, onRemove, onProxy, onContextMenu, onImportLink, onLibrary }: Props) {
+export function MediaBin({ media, missing, proxyProgress, onImport, onAdd, onRemove, onProxy, onContextMenu, onImportLink, onLibrary }: Props) {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<Filter>('all')
   const visible = media.filter((m) => (filter === 'all' || m.kind === filter) && m.name.toLowerCase().includes(query.toLowerCase()))
@@ -93,7 +95,7 @@ export function MediaBin({ media, proxyProgress, onImport, onAdd, onRemove, onPr
               return (
                 <div
                   key={m.id}
-                  className={`media-card ${m.kind}`}
+                  className={`media-card ${m.kind}${missing?.has(m.id) ? ' missing' : ''}`}
                   draggable
                   onDragStart={(e) => {
                     e.dataTransfer.setData('application/x-media-id', m.id)
@@ -113,6 +115,7 @@ export function MediaBin({ media, proxyProgress, onImport, onAdd, onRemove, onPr
                       <Icon size={11} strokeWidth={2.4} />
                     </span>
                     {m.kind !== 'image' && <span className="media-meta">{formatTime(m.duration, false)}</span>}
+                    {missing?.has(m.id) && <span className="media-missing">Arquivo não encontrado</span>}
                     {m.kind === 'video' &&
                       (progress !== undefined ? (
                         <span className="media-proxy busy">

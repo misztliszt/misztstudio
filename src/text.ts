@@ -190,21 +190,32 @@ export function renderTextPng(style: TextStyle, W: number, H: number) {
  * Sequência de quadros da animação para a exportação: amostra em `fps` e junta quadros
  * idênticos seguidos (karaokê e palavra a palavra viram poucas imagens).
  */
-export function renderTextSequence(style: TextStyle, W: number, H: number, duration: number, fps: number) {
+export async function renderTextSequence(style: TextStyle, W: number, H: number, duration: number, fps: number) {
   const canvas = document.createElement('canvas')
   canvas.width = W
   canvas.height = H
-  const ctx = canvas.getContext('2d')!
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })!
   const frames: { png: string; duration: number }[] = []
   const count = Math.max(1, Math.round(duration * fps))
-  let last = ''
+  let previous: Uint32Array | null = null
   for (let f = 0; f < count; f++) {
     ctx.clearRect(0, 0, W, H)
     drawText(ctx, style, W, H, f / fps, duration)
-    const png = canvas.toDataURL('image/png').split(',')[1]
-    if (png === last) frames[frames.length - 1].duration += 1 / fps
-    else frames.push({ png, duration: 1 / fps })
-    last = png
+    // Só codifica o PNG (caro) quando os pixels mudaram; comparar os pixels é barato.
+    const pixels = new Uint32Array(ctx.getImageData(0, 0, W, H).data.buffer)
+    if (previous && samePixels(previous, pixels)) frames[frames.length - 1].duration += 1 / fps
+    else {
+      frames.push({ png: canvas.toDataURL('image/png').split(',')[1], duration: 1 / fps })
+      previous = pixels
+    }
+    // Devolve o controle à interface de vez em quando: legendas longas não podem congelar a janela.
+    if (f % 6 === 5) await new Promise((resolve) => setTimeout(resolve, 0))
   }
   return frames
+}
+
+function samePixels(a: Uint32Array, b: Uint32Array) {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  return true
 }

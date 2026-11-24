@@ -10,6 +10,7 @@ const { StemEngine } = require('./stems.cjs')
 const { Downloader } = require('./downloader.cjs')
 const { AudioTools } = require('./audiotools.cjs')
 const { ExportQueue } = require('./exportqueue.cjs')
+const { writeFileAtomic } = require('./fsutil.cjs')
 const { setupUpdater } = require('./updater.cjs')
 const { detectKeyFile } = require('./analysis.cjs')
 const { Library } = require('./library.cjs')
@@ -211,7 +212,7 @@ function readSettings() {
   }
 }
 function writeSettings(s) {
-  fs.writeFileSync(settingsPath(), JSON.stringify(s, null, 2))
+  writeFileAtomic(settingsPath(), JSON.stringify(s, null, 2))
 }
 
 // Projetos recentes (mais novo primeiro).
@@ -225,7 +226,7 @@ function readRecent() {
   }
 }
 function writeRecent(list) {
-  fs.writeFileSync(recentPath(), JSON.stringify(list.slice(0, 12), null, 2))
+  writeFileAtomic(recentPath(), JSON.stringify(list.slice(0, 12), null, 2))
 }
 function addRecent(filePath) {
   let summary = {}
@@ -241,6 +242,9 @@ function addRecent(filePath) {
 
 let mainWindow
 let exportQueue = null
+// O renderer avisa quando o projeto tem alterações não salvas.
+let projectDirty = false
+let closeConfirmed = false
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -268,8 +272,24 @@ function createWindow() {
     if (/^https:\/\/(creativecommons\.org|www\.jamendo\.com|freesound\.org|ccmixter\.org|wikimedia\.org|commons\.wikimedia\.org|openverse\.org)\//.test(url)) void shell.openExternal(url)
     return { action: 'deny' }
   })
+  // Projeto com alterações não salvas: pergunta antes de fechar (a cópia de recuperação continua no disco).
+  mainWindow.on('close', (e) => {
+    if (!projectDirty || closeConfirmed) return
+    const choice = dialog.showMessageBoxSync(mainWindow, {
+      type: 'warning',
+      buttons: ['Voltar ao projeto', 'Sair sem salvar'],
+      defaultId: 0,
+      cancelId: 0,
+      title: 'Alterações não salvas',
+      message: 'O projeto tem alterações que ainda não foram salvas.',
+      detail: 'Volte ao projeto e salve com Ctrl+S, ou saia sem salvar (a cópia de recuperação automática fica disponível na próxima abertura).',
+    })
+    if (choice === 0) e.preventDefault()
+    else closeConfirmed = true
+  })
   // Exportações na fila: pergunta antes de fechar.
   mainWindow.on('close', (e) => {
+    if (e.defaultPrevented) return
     if (!exportQueue || !exportQueue.active) return
     const choice = dialog.showMessageBoxSync(mainWindow, {
       type: 'warning',
@@ -304,6 +324,11 @@ app.whenReady().then(() => {
     addRecent(filePath)
     return { filePath, json }
   })
+  ipcMain.handle('app:setDirty', (_e, dirty) => {
+    projectDirty = dirty === true
+  })
+  // Quais arquivos de mídia ainda existem (para avisar de mídia movida ou apagada ao abrir um projeto).
+  ipcMain.handle('media:exists', (_e, paths) => (Array.isArray(paths) ? paths.map((p) => typeof p === 'string' && fs.existsSync(p)) : []))
   ipcMain.handle('shell:show', (_e, filePath) => shell.showItemInFolder(filePath))
   // Só abre o site oficial do VB-CABLE (cabo de áudio virtual usado no microfone ao vivo).
   ipcMain.handle('shell:vbcable', () => shell.openExternal('https://vb-audio.com/Cable/'))
@@ -341,7 +366,7 @@ app.whenReady().then(() => {
       if (res.canceled) return null
       target = res.filePath
     }
-    fs.writeFileSync(target, json, 'utf8')
+    writeFileAtomic(target, json, { backup: true })
     addRecent(target)
     return target
   })
@@ -639,7 +664,7 @@ app.whenReady().then(() => {
   ipcMain.handle('autosave:write', (_e, json) => {
     const file = autosavePath()
     if (json === null) fs.rmSync(file, { force: true })
-    else fs.writeFileSync(file, json, 'utf8')
+    else writeFileAtomic(file, json)
   })
 
   const settings = readSettings()

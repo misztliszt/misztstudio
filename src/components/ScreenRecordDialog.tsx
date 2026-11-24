@@ -111,6 +111,14 @@ export function ScreenRecordDialog({ at, onDone, onClose }: Props) {
 
   // Atalho global para parar com o app minimizado.
   useEffect(() => window.api.onScreenStop(() => stopRef.current()), [])
+  // Falso depois que o diálogo fecha: a contagem regressiva e as esperas de start() conferem isto antes de seguir.
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
   useEffect(
     () => () => {
       // Fechou no meio (ou desmontou): solta tudo e apaga os pedaços.
@@ -135,19 +143,36 @@ export function ScreenRecordDialog({ at, onDone, onClose }: Props) {
       return
     }
     display.current = stream
+    const abort = (id?: string) => {
+      stream.getTracks().forEach((t) => t.stop())
+      display.current = null
+      if (id) void window.api.screenDiscard(id)
+      job.current = null
+    }
+    if (!mounted.current) return abort()
     const vMime = videoMime()
     const aMime = 'audio/webm;codecs=opus'
     const tracks: { key: Part; stream: MediaStream; mime: string; bits: number }[] = [{ key: 'video', stream: new MediaStream(stream.getVideoTracks()), mime: vMime, bits: fps === '60' ? 16_000_000 : 10_000_000 }]
     if (stream.getAudioTracks().length) tracks.push({ key: 'system', stream: new MediaStream(stream.getAudioTracks()), mime: aMime, bits: 256_000 })
     if (micOn && mic.current) tracks.push({ key: 'mic', stream: mic.current, mime: aMime, bits: 256_000 })
-    const id = await window.api.screenBegin(tracks.map((t) => ({ key: t.key, mime: t.mime })))
+    let id: string
+    try {
+      id = await window.api.screenBegin(tracks.map((t) => ({ key: t.key, mime: t.mime })))
+    } catch (err) {
+      abort()
+      setError(`Não foi possível iniciar a gravação: ${err instanceof Error ? err.message : String(err)}`)
+      return
+    }
     job.current = id
+    if (!mounted.current) return abort(id)
 
     setState('count')
     setCount(3)
     for (let n = 3; n > 0; n--) {
       setCount(n)
       await new Promise((r) => setTimeout(r, 1000))
+      // Fechou o diálogo durante a contagem: não grava, não registra atalho e não minimiza o app.
+      if (!mounted.current) return abort(id)
     }
     // Cada fonte num gravador próprio; os pedaços vão em ordem para o disco.
     const writes: Promise<void>[] = []

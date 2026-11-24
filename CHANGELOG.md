@@ -1,5 +1,26 @@
 # Novidades
 
+## 1.0.1
+
+**Proteção contra perda de dados**
+- O projeto e a cópia de recuperação são gravados com segurança: uma queda de energia no meio de um salvamento não corrompe mais o arquivo, e a versão anterior fica guardada em um arquivo .bak ao lado.
+- Ao fechar a janela com alterações não salvas, o programa pergunta antes de sair.
+- Projetos corrompidos ou editados à mão agora mostram uma mensagem clara em vez de derrubar o programa; clipes inválidos são descartados com aviso.
+- Mídias movidas ou apagadas são avisadas ao abrir o projeto e marcadas na biblioteca; use "Localizar arquivo…" (botão direito) para reconectar.
+- Descartar a cópia de recuperação ou a gravação do set DJ agora pede confirmação.
+- Erro ao salvar o projeto passa a aparecer na tela.
+
+**Exportação**
+- Exportar por cima de um arquivo existente e falhar não apaga mais o arquivo antigo (a exportação grava num arquivo provisório e só troca no fim).
+- Timelines com muitos clipes não estouram mais o limite de linha de comando do Windows.
+- Velocidade inválida em um projeto não trava mais o programa.
+- Legendas animadas (karaokê, palavra a palavra) exportam sem congelar a janela.
+
+**Correções**
+- Arrastar um clipe para outra trilha não interrompe mais o arrasto.
+- Gravação de tela: fechar o diálogo durante a contagem regressiva não deixa mais o atalho global e a gravação presos.
+- Remover fundo: cancelar durante a preparação apaga os quadros temporários; falhas ao carregar o modelo agora aparecem em vez de travar.
+
 ## 1.0.0
 
 **Modo DJ**
