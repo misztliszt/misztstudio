@@ -37,6 +37,12 @@ class AudioTools {
     this.ffmpeg = ffmpeg
     // Reaproveita a busca do Python e o executor de processos do motor de separação.
     this.helper = new StemEngine(baseDir, ffmpeg)
+    // Plugins que a busca encontrou: só esses podem ser carregados (um plugin VST3 é código nativo).
+    this.known = new Set()
+  }
+
+  assertPlugin(pluginPath) {
+    if (typeof pluginPath !== 'string' || !this.known.has(pluginPath.toLowerCase())) throw new Error('Plugin não encontrado na busca de plugins VST3')
   }
 
   get venvPython() {
@@ -114,7 +120,9 @@ class AudioTools {
     }
     for (const r of roots) walk(r, 0)
     const seen = new Set()
-    return found.filter((p) => (seen.has(p.path) ? false : seen.add(p.path))).sort((a, b) => a.name.localeCompare(b.name))
+    const list = found.filter((p) => (seen.has(p.path) ? false : seen.add(p.path))).sort((a, b) => a.name.localeCompare(b.name))
+    this.known = new Set(list.map((p) => p.path.toLowerCase()))
+    return list
   }
 
   async py(args) {
@@ -140,11 +148,13 @@ class AudioTools {
 
   /** Abre a interface do plugin (janela nativa) e devolve o estado ao fechar. */
   editor(pluginPath, state) {
+    this.assertPlugin(pluginPath)
     return this.py(['editor', '--plugin', pluginPath, ...(state ? ['--state', state] : [])])
   }
 
   /** Processa o trecho usado do clipe pelo plugin. Devolve o caminho do WAV. */
   async apply(filePath, inPoint, duration, pluginPath, state) {
+    this.assertPlugin(pluginPath)
     fs.mkdirSync(this.out, { recursive: true })
     const id = this.key(filePath, inPoint, duration, pluginPath, state, Date.now())
     const input = path.join(this.out, `vst-in-${id}.wav`)

@@ -6,9 +6,22 @@ const path = require('node:path')
 const { spawn, execFile } = require('node:child_process')
 const { Readable } = require('node:stream')
 const { pipeline } = require('node:stream/promises')
+const crypto = require('node:crypto')
 
 const isWin = process.platform === 'win32'
 const RELEASE_URL = `https://github.com/yt-dlp/yt-dlp/releases/latest/download/${isWin ? 'yt-dlp.exe' : process.platform === 'darwin' ? 'yt-dlp_macos' : 'yt-dlp'}`
+
+/** Só endereços http(s): qualquer outra coisa (inclusive algo que pareça uma opção) é recusada. */
+function assertHttpUrl(url) {
+  let u
+  try {
+    u = new URL(String(url))
+  } catch {
+    throw new Error('Endereço inválido')
+  }
+  if ((u.protocol !== 'http:' && u.protocol !== 'https:') || String(url).length > 2048) throw new Error('Use um endereço http ou https')
+  return u.href
+}
 
 /** Seletores de formato: prefere H.264 + AAC (tocam direto na prévia, sem proxy). */
 const PRESETS = {
@@ -82,11 +95,30 @@ class Downloader {
         cb(null, chunk)
       },
     })
-    await pipeline(Readable.fromWeb(res.body), counter, fs.createWriteStream(tmp))
-    fs.renameSync(tmp, this.exe)
+    try {
+      await pipeline(Readable.fromWeb(res.body), counter, fs.createWriteStream(tmp))
+      await this.verifyHash(tmp)
+      fs.renameSync(tmp, this.exe)
+    } catch (err) {
+      fs.rmSync(tmp, { force: true })
+      this.abort = null
+      throw err
+    }
     if (!isWin) fs.chmodSync(this.exe, 0o755)
     this.abort = null
     return this.status()
+  }
+
+  /** Confere o SHA-256 do download com a lista publicada junto do executável. */
+  async verifyHash(file) {
+    const name = RELEASE_URL.split('/').pop()
+    const sums = await fetch(RELEASE_URL.replace(/[^/]+$/, 'SHA2-256SUMS'), { redirect: 'follow', signal: AbortSignal.timeout(30000) })
+    if (!sums.ok) throw new Error('Não foi possível conferir a integridade do yt-dlp')
+    const line = (await sums.text()).split(/\r?\n/).find((l) => l.trim().endsWith('  ' + name) || l.trim().endsWith(' *' + name))
+    const expected = line && line.trim().split(/\s+/)[0].toLowerCase()
+    if (!expected) throw new Error('Não foi possível conferir a integridade do yt-dlp')
+    const actual = crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')
+    if (actual !== expected) throw new Error('O arquivo baixado do yt-dlp não confere com o hash oficial; instalação cancelada')
   }
 
   async update() {
@@ -96,7 +128,8 @@ class Downloader {
 
   /** Metadados do vídeo (sem baixar). */
   async info(url) {
-    const json = await this.run(['-J', '--no-playlist', '--no-warnings', url], { timeout: 60000 })
+    url = assertHttpUrl(url)
+    const json = await this.run(['-J', '--no-playlist', '--no-warnings', '--', url], { timeout: 60000 })
     const d = JSON.parse(json)
     const heights = [...new Set((d.formats || []).map((f) => f.height).filter(Boolean))].sort((a, b) => b - a)
     return {
@@ -134,6 +167,7 @@ class Downloader {
 
   /** Baixa o vídeo; devolve o caminho do arquivo final. */
   async download(url, preset, onProgress) {
+    url = assertHttpUrl(url)
     fs.mkdirSync(this.outDir, { recursive: true })
     let file = null
     let part = 0
@@ -148,7 +182,8 @@ class Downloader {
       '--print', 'after_move:filepath',
       // --print liga o modo silencioso; --progress mantém as linhas de progresso.
       '--progress',
-      ...(PRESETS[preset] || PRESETS.best),
+      ...(Object.hasOwn(PRESETS, preset) ? PRESETS[preset] : PRESETS.best),
+      '--',
       url,
     ]
     await this.run(args, {
@@ -183,4 +218,4 @@ function cleanError(stderr) {
   return (err || lines[0] || '').replace(/^ERROR:\s*/, '').replace(/\[\w+\]\s*[\w-]+:\s*/, '').trim()
 }
 
-module.exports = { Downloader }
+module.exports = { Downloader, assertHttpUrl }

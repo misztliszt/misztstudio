@@ -11,12 +11,27 @@ const { Downloader } = require('./downloader.cjs')
 const { AudioTools } = require('./audiotools.cjs')
 const { ExportQueue } = require('./exportqueue.cjs')
 const { writeFileAtomic } = require('./fsutil.cjs')
+const { isLocalPath, MediaAllowlist, isTrustedUrl, corsOrigin, sanitizeSettingsPatch, hasProjectExt, norm } = require('./security.cjs')
 const { setupUpdater } = require('./updater.cjs')
 const { detectKeyFile } = require('./analysis.cjs')
 const { Library } = require('./library.cjs')
 const { loadLibrary, detectSources } = require('./djlibrary.cjs')
 
-const isDev = process.argv.includes('--dev')
+// O modo de desenvolvimento só existe fora do app instalado (senão qualquer atalho com --dev carregaria localhost).
+const isDev = !app.isPackaged && process.argv.includes('--dev')
+
+// Só arquivos que o programa conhece (importados, abertos num projeto ou gerados por ele) saem pelo media://.
+const mediaAllowed = new MediaAllowlist()
+// Projetos que o usuário abriu ou salvou nesta sessão (o renderer só pode gravar por cima deles).
+const knownProjects = new Set()
+// Só a nossa interface pode chamar o processo principal.
+const rawHandle = ipcMain.handle.bind(ipcMain)
+ipcMain.handle = (channel, fn) =>
+  rawHandle(channel, (e, ...args) => {
+    const url = e.senderFrame ? e.senderFrame.url : ''
+    if (!isTrustedUrl(url, isDev)) throw new Error('Origem não autorizada')
+    return fn(e, ...args)
+  })
 
 // ffmpeg-static/ffprobe-static ficam dentro de app.asar.unpacked quando empacotado.
 function binPath(p) {
@@ -67,7 +82,13 @@ const thumbDir = path.join(os.tmpdir(), 'miszt-studio-thumbs')
 
 // Serve arquivos locais com suporte a Range, necessário para o <video> buscar posições.
 function handleMedia(request) {
-  const filePath = decodeURIComponent(new URL(request.url).pathname.slice(1))
+  let filePath
+  try {
+    filePath = decodeURIComponent(new URL(request.url).pathname.slice(1))
+  } catch {
+    return new Response('bad request', { status: 400 })
+  }
+  if (!mediaAllowed.has(filePath)) return new Response('forbidden', { status: 403 })
   let stat
   try {
     stat = fs.statSync(filePath)
@@ -77,8 +98,9 @@ function handleMedia(request) {
   const headers = {
     'Content-Type': MIME[path.extname(filePath).toLowerCase()] || 'application/octet-stream',
     'Accept-Ranges': 'bytes',
-    'Access-Control-Allow-Origin': '*',
   }
+  const origin = corsOrigin(request.headers.get('origin'), isDev)
+  if (origin) headers['Access-Control-Allow-Origin'] = origin
   const range = request.headers.get('range')
   const match = range && /bytes=(\d*)-(\d*)/.exec(range)
   if (match) {
@@ -100,6 +122,7 @@ function handleMedia(request) {
 }
 
 function mediaUrl(filePath) {
+  mediaAllowed.add(filePath)
   return 'media://local/' + encodeURIComponent(filePath)
 }
 
@@ -113,6 +136,7 @@ function run(bin, args) {
 }
 
 async function probe(filePath) {
+  if (!isLocalPath(filePath)) throw new Error('Caminho de arquivo inválido')
   const ext = path.extname(filePath).toLowerCase()
   const out = await run(FFPROBE, ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', filePath])
   const info = JSON.parse(out)
@@ -263,10 +287,17 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
       // O microfone ao vivo e as exportações continuam com a janela minimizada.
       backgroundThrottling: false,
     },
   })
+  // A janela nunca navega para fora da interface do app (nem abre <webview>).
+  mainWindow.webContents.on('will-navigate', (e, url) => {
+    if (!isTrustedUrl(url, isDev)) e.preventDefault()
+  })
+  mainWindow.webContents.on('will-attach-webview', (e) => e.preventDefault())
   // Links externos (ex.: textos das licenças Creative Commons) abrem no navegador, nunca dentro do app.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https:\/\/(creativecommons\.org|www\.jamendo\.com|freesound\.org|ccmixter\.org|wikimedia\.org|commons\.wikimedia\.org|openverse\.org)\//.test(url)) void shell.openExternal(url)
@@ -312,15 +343,21 @@ app.whenReady().then(() => {
   protocol.handle('app', handleApp)
 
   // Microfone para gravação de narração (só a nossa interface pede).
-  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => callback(permission === 'media' || permission === 'clipboard-read'))
-  session.defaultSession.setPermissionCheckHandler((_wc, permission) => permission === 'media' || permission === 'clipboard-read')
+  const permitted = (url, permission) => isTrustedUrl(url, isDev) && (permission === 'media' || permission === 'clipboard-read')
+  session.defaultSession.setPermissionRequestHandler((wc, permission, callback) => callback(permitted(wc.getURL(), permission)))
+  session.defaultSession.setPermissionCheckHandler((wc, permission) => permitted(wc ? wc.getURL() : '', permission))
 
   ipcMain.handle('recent:list', () =>
     readRecent().map((r) => ({ ...r, exists: fs.existsSync(r.path) })),
   )
   ipcMain.handle('recent:remove', (_e, filePath) => writeRecent(readRecent().filter((r) => r.path !== filePath)))
   ipcMain.handle('project:openPath', (_e, filePath) => {
+    // Só projetos da lista de recentes (ou já abertos nesta sessão), e só arquivos .edproj.
+    const known = knownProjects.has(norm(filePath)) || readRecent().some((r) => norm(r.path) === norm(filePath))
+    if (!hasProjectExt(filePath) || !known) throw new Error('Este arquivo não é um projeto conhecido')
     const json = fs.readFileSync(filePath, 'utf8')
+    knownProjects.add(norm(filePath))
+    mediaAllowed.addFromProject(json)
     addRecent(filePath)
     return { filePath, json }
   })
@@ -337,7 +374,11 @@ app.whenReady().then(() => {
 
   ipcMain.handle('project:initial', () => {
     const filePath = projectFromArgs(process.argv)
-    return filePath ? { filePath, json: fs.readFileSync(filePath, 'utf8') } : null
+    if (!filePath) return null
+    const json = fs.readFileSync(filePath, 'utf8')
+    knownProjects.add(norm(filePath))
+    mediaAllowed.addFromProject(json)
+    return { filePath, json }
   })
 
   ipcMain.handle('media:import', async () => {
@@ -353,19 +394,22 @@ app.whenReady().then(() => {
     return probeMany(res.filePaths)
   })
 
-  ipcMain.handle('media:probe', (_e, paths) => probeMany(paths))
+  ipcMain.handle('media:probe', (_e, paths) => probeMany(Array.isArray(paths) ? paths : []))
 
   ipcMain.handle('project:save', async (_e, { json, filePath }) => {
-    let target = filePath
+    if (typeof json !== 'string') throw new Error('Projeto inválido')
+    // Só grava direto num arquivo que o usuário já escolheu (abrir/salvar como) nesta sessão; senão abre o diálogo.
+    let target = typeof filePath === 'string' && hasProjectExt(filePath) && knownProjects.has(norm(filePath)) ? filePath : null
     if (!target) {
       const res = await dialog.showSaveDialog(mainWindow, {
         title: 'Salvar projeto',
         defaultPath: 'projeto.edproj',
         filters: [{ name: 'Projeto', extensions: ['edproj'] }],
       })
-      if (res.canceled) return null
-      target = res.filePath
+      if (res.canceled || !res.filePath) return null
+      target = hasProjectExt(res.filePath) ? res.filePath : res.filePath + '.edproj'
     }
+    knownProjects.add(norm(target))
     writeFileAtomic(target, json, { backup: true })
     addRecent(target)
     return target
@@ -379,8 +423,11 @@ app.whenReady().then(() => {
     })
     if (res.canceled) return null
     const filePath = res.filePaths[0]
+    const json = fs.readFileSync(filePath, 'utf8')
+    knownProjects.add(norm(filePath))
+    mediaAllowed.addFromProject(json)
     addRecent(filePath)
-    return { filePath, json: fs.readFileSync(filePath, 'utf8') }
+    return { filePath, json }
   })
 
   exportQueue = new ExportQueue(FFMPEG, (jobs) => mainWindow && mainWindow.webContents.send('export:jobs', jobs))
@@ -404,9 +451,15 @@ app.whenReady().then(() => {
   ipcMain.handle('export:clear', (_e, id) => exportQueue.clear(id))
   ipcMain.handle('export:list', () => exportQueue.list())
 
-  ipcMain.handle('media:proxy', (_e, filePath) => makeProxy(filePath))
-  ipcMain.handle('audio:key', (_e, filePath, inPoint, duration) => detectKeyFile(FFMPEG, filePath, inPoint, duration))
-  ipcMain.handle('media:probePaths', (_e, paths) => probeMany(paths.filter((p) => typeof p === 'string' && fs.existsSync(p))))
+  ipcMain.handle('media:proxy', (_e, filePath) => {
+    if (!isLocalPath(filePath)) throw new Error('Caminho de arquivo inválido')
+    return makeProxy(filePath)
+  })
+  ipcMain.handle('audio:key', (_e, filePath, inPoint, duration) => {
+    if (!isLocalPath(filePath)) throw new Error('Caminho de arquivo inválido')
+    return detectKeyFile(FFMPEG, filePath, inPoint, duration)
+  })
+  ipcMain.handle('media:probePaths', (_e, paths) => probeMany((Array.isArray(paths) ? paths : []).filter((p) => isLocalPath(p) && fs.existsSync(p))))
 
   // ---------- Bibliotecas de DJ (rekordbox XML, Traktor NML, Serato, Engine DJ) ----------
   ipcMain.handle('dj:detect', () => detectSources())
@@ -491,7 +544,9 @@ app.whenReady().then(() => {
     fs.mkdirSync(dir, { recursive: true })
     const id = crypto.randomUUID()
     const files = {}
+    if (!Array.isArray(parts) || parts.length === 0 || parts.length > 3) throw new Error('Fontes de gravação inválidas')
     for (const { key, mime } of parts) {
+      if (!['video', 'system', 'mic'].includes(key) || files[key]) throw new Error('Fonte de gravação inválida')
       const raw = path.join(dir, `.${key}.${/mp4/.test(mime) ? 'mp4' : 'webm'}`)
       files[key] = { raw, mime, stream: fs.createWriteStream(raw) }
     }
@@ -539,6 +594,7 @@ app.whenReady().then(() => {
   // ---------- Remoção de fundo (máscaras calculadas pela IA na interface) ----------
   const bgJobs = new Map()
   ipcMain.handle('bg:prepare', async (_e, filePath, inPoint, duration) => {
+    if (!isLocalPath(filePath)) throw new Error('Caminho de arquivo inválido')
     const info = JSON.parse(await run(FFPROBE, ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height,r_frame_rate', '-of', 'json', filePath]))
     const st = info.streams[0]
     const [num, den] = String(st.r_frame_rate || '30/1').split('/').map(Number)
@@ -593,6 +649,7 @@ app.whenReady().then(() => {
 
   /** Quadro parado (PNG) da mídia no instante `time` da fonte. */
   ipcMain.handle('media:frame', async (_e, filePath, time) => {
+    if (!isLocalPath(filePath)) throw new Error('Caminho de arquivo inválido')
     const dir = path.join(app.getPath('userData'), 'frames')
     fs.mkdirSync(dir, { recursive: true })
     const out = path.join(dir, `${crypto.createHash('sha1').update(`${filePath}|${time.toFixed(3)}`).digest('hex').slice(0, 16)}.png`)
@@ -605,6 +662,7 @@ app.whenReady().then(() => {
    * (o filtro reverse guarda o bloco inteiro na memória) e junta os blocos em ordem inversa.
    */
   ipcMain.handle('media:reverse', async (_e, filePath, inPoint, duration, hasAudio) => {
+    if (!isLocalPath(filePath)) throw new Error('Caminho de arquivo inválido')
     const key = crypto.createHash('sha1').update(`${filePath}|${inPoint.toFixed(3)}|${duration.toFixed(3)}`).digest('hex').slice(0, 16)
     const dir = path.join(app.getPath('userData'), 'reversed')
     const out = path.join(dir, `${key}.mp4`)
@@ -681,7 +739,14 @@ app.whenReady().then(() => {
     return downloader.outDir
   })
   ipcMain.handle('settings:get', () => ({ ...readSettings(), downloadDir: downloader.outDir, version: app.getVersion(), packaged: app.isPackaged }))
-  ipcMain.handle('settings:set', (_e, patch) => {
+  ipcMain.handle('settings:set', (_e, raw) => {
+    const patch = sanitizeSettingsPatch(raw, (d) => {
+      try {
+        return fs.statSync(d).isDirectory()
+      } catch {
+        return false
+      }
+    })
     const next = { ...readSettings(), ...patch }
     writeSettings(next)
     if (patch.downloadDir) downloader.outDir = patch.downloadDir
@@ -729,7 +794,9 @@ app.whenReady().then(() => {
   ipcMain.handle('autosave:read', () => {
     const file = autosavePath()
     if (!fs.existsSync(file)) return null
-    return { json: fs.readFileSync(file, 'utf8'), savedAt: fs.statSync(file).mtimeMs }
+    const json = fs.readFileSync(file, 'utf8')
+    mediaAllowed.addFromProject(json)
+    return { json, savedAt: fs.statSync(file).mtimeMs }
   })
 
   createWindow()
