@@ -41,10 +41,16 @@ function volumeExpr(clip, trackVolume = 1) {
   return `${n(base)}*(${expr})`
 }
 
+/** Velocidade válida: número finito e positivo (projeto corrompido não pode travar o laço de atempo). */
+function safeSpeed(speed) {
+  const s = Number(speed)
+  return Number.isFinite(s) && s > 0 ? Math.min(100, Math.max(0.01, s)) : 1
+}
+
 /** Cadeia de atempo para qualquer velocidade (cada estágio aceita 0,5–2; o tom é preservado). */
 function atempoChain(speed) {
   const parts = []
-  let s = speed
+  let s = safeSpeed(speed)
   while (s > 2) {
     parts.push('atempo=2')
     s /= 2
@@ -58,6 +64,32 @@ function atempoChain(speed) {
 }
 
 const even = (v) => Math.max(2, Math.round(v / 2) * 2)
+
+/** Largura/altura e fps vêm do projeto (arquivo editável): só valores numéricos dentro de limites razoáveis entram no filtro. */
+const safeDim = (v, fallback) => {
+  const x = Math.round(Number(v))
+  return Number.isFinite(x) && x >= 2 && x <= 16384 ? x : fallback
+}
+const safeFps = (v) => {
+  const x = Number(v)
+  return Number.isFinite(x) && x >= 1 && x <= 240 ? x : 30
+}
+/** Identificador usado em nome de arquivo ou de rótulo: só letras, números, hífen e sublinhado. */
+const safeId = (id) => String(id).replace(/[^\w-]/g, '_')
+
+/**
+ * Argumentos do grafo de filtros. O Windows limita a linha de comando (~32 mil caracteres):
+ * grafos longos vão para um arquivo (-filter_complex_script).
+ */
+const INLINE_FILTER_LIMIT = 6000
+function filterArgs(filters, workDir, name) {
+  const graph = filters.join(';')
+  if (graph.length <= INLINE_FILTER_LIMIT || !workDir) return ['-filter_complex', graph]
+  fs.mkdirSync(workDir, { recursive: true })
+  const file = path.join(workDir, name + '.ffgraph')
+  fs.writeFileSync(file, graph, 'utf8')
+  return ['-filter_complex_script', file]
+}
 
 /**
  * Expressão de uma propriedade animada em função de `tv` (tempo local do clipe).
@@ -108,7 +140,7 @@ function mixClips(project, inputs, filters, clips, out) {
   const labels = []
   for (const clip of clips) {
     const i = addClipInput(inputs, clip, project.media[clip.mediaId])
-    const label = `c${clip.id.replace(/\W/g, '')}_${i}`
+    const label = `c${safeId(clip.id).replace(/_/g, '')}_${i}`
     filters.push(clipAudioFilter(i, clip, label))
     labels.push(`[${label}]`)
   }
@@ -202,7 +234,9 @@ async function prepareExport(payload, outPath, { workDir, runFfmpeg }) {
   const { project, textImages = {}, colorMatrices = {}, textSequences = {} } = payload
   const opts = { format: 'mp4', codec: 'h264', resolution: 0, fps: 0, quality: 'high', normalize: false, ...payload.options }
   const audioOnly = opts.format === 'mp3' || opts.format === 'wav'
-  const { width: W, height: H, fps } = project
+  const W = safeDim(project.width, 1920)
+  const H = safeDim(project.height, 1080)
+  const fps = safeFps(project.fps)
   const trackById = new Map(project.tracks.map((t) => [t.id, t]))
   const trackOrder = new Map(project.tracks.map((t, i) => [t.id, i]))
   const clips = project.clips.filter((c) => trackById.has(c.trackId) && c.duration > 0 && (c.text || project.media[c.mediaId]))
@@ -231,7 +265,7 @@ async function prepareExport(payload, outPath, { workDir, runFfmpeg }) {
     const seq = clip.text && textSequences[clip.id]
     if (seq && seq.length) {
       // Animação renderizada quadro a quadro na interface: imagens com duração (concat demuxer).
-      const dir = path.join(workDir, `text_${clip.id}`)
+      const dir = path.join(workDir, `text_${safeId(clip.id)}`)
       fs.mkdirSync(dir, { recursive: true })
       const lines = []
       seq.forEach((f, k) => {
@@ -245,7 +279,7 @@ async function prepareExport(payload, outPath, { workDir, runFfmpeg }) {
       i = inputs.add('-f', 'concat', '-safe', '0', '-i', list)
       chain.push(`[${i}:v]fps=${fps}`, 'format=rgba', `scale=${W}:${H}`, `trim=duration=${n(clip.duration)}`, `setpts=PTS-STARTPTS+${n(start)}/TB`)
     } else if (clip.text) {
-      const png = path.join(workDir, `text_${clip.id}.png`)
+      const png = path.join(workDir, `text_${safeId(clip.id)}.png`)
       fs.writeFileSync(png, Buffer.from(textImages[clip.id] || '', 'base64'))
       i = inputs.add('-loop', '1', '-framerate', String(fps), '-t', n(clip.duration), '-i', png)
       chain.push(`[${i}:v]format=rgba`, `scale=${W}:${H}`)
@@ -401,7 +435,7 @@ async function prepareExport(payload, outPath, { workDir, runFfmpeg }) {
     mixClips(project, stemInputs, stemFilters, audioClipsOf(project, track.id), 'stem')
     stemFilters.push(`[stem]apad=whole_dur=${n(total)},atrim=0:${n(total)}[stemout]`)
     const raw = path.join(workDir, `${tid}_dry.raw`)
-    await runFfmpeg(['-y', '-hide_banner', ...stemInputs.args, '-filter_complex', stemFilters.join(';'), '-map', '[stemout]', '-f', 'f32le', '-ar', String(SR), '-ac', '2', raw])
+    await runFfmpeg(['-y', '-hide_banner', ...stemInputs.args, ...filterArgs(stemFilters, workDir, `${tid}_stem`), '-map', '[stemout]', '-f', 'f32le', '-ar', String(SR), '-ac', '2', raw])
     stems.set(track.id, raw)
     return raw
   }
@@ -464,7 +498,7 @@ async function prepareExport(payload, outPath, { workDir, runFfmpeg }) {
 
   const crf = { max: 15, high: 19, medium: 23, small: 28 }[opts.quality] ?? 19
   const outFps = String(opts.fps || fps)
-  const args = ['-y', '-hide_banner', ...inputs.args, '-filter_complex', filters.join(';')]
+  const args = ['-y', '-hide_banner', ...inputs.args, ...filterArgs(filters, workDir, 'main')]
   if (audioOnly) {
     args.push('-map', '[aout]')
     if (opts.format === 'mp3') args.push('-c:a', 'libmp3lame', '-b:a', '320k')
@@ -533,4 +567,4 @@ function buildMixdownArgs(project, sampleRate) {
   return ['-hide_banner', '-loglevel', 'error', ...inputs.args, '-filter_complex', filters.join(';'), '-map', '[mix]', '-ac', '1', '-ar', String(sampleRate), '-f', 'f32le', 'pipe:1']
 }
 
-module.exports = { prepareExport, buildMixdownArgs }
+module.exports = { prepareExport, buildMixdownArgs, atempoChain, filterArgs }

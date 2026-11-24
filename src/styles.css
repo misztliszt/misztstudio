@@ -579,6 +579,21 @@ button {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
+.media-missing {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  padding: 6px;
+  background: rgba(14, 15, 19, 0.82);
+  color: #ffb4a8;
+  font-size: 11px;
+  font-weight: 700;
+}
+.media-card.missing {
+  outline: 1px solid rgba(255, 120, 100, 0.55);
+}
 .media-proxy {
   position: absolute;
   left: 6px;

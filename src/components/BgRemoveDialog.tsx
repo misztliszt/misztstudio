@@ -54,17 +54,27 @@ export function BgRemoveDialog({ clip, media, onDone, onClose }: Props) {
       else if (m.type === 'mask') pending.get(m.index)?.(m.mask)
       else if (m.type === 'error') fail(new Error(m.message))
     }
+    // Falha ao carregar o módulo ou o modelo: sem isto o diálogo ficava em "Recortando…" para sempre.
+    worker.onerror = (ev) => fail(new Error(ev.message || 'O recorte não conseguiu iniciar'))
+    worker.onmessageerror = () => fail(new Error('Resposta inválida do recorte'))
     try {
       setText('Preparando os quadros…')
       const [job] = await Promise.all([window.api.bgPrepare(media.path, clip.in, srcDuration), (worker.postMessage({ type: 'load' } satisfies BgWorkerIn), ready)])
       jobId = job.id
+      // Cancelou durante a preparação: o job só passou a existir agora, então cancela aqui (apaga os quadros temporários).
+      if (canceled) {
+        void window.api.bgCancel(job.id)
+        return
+      }
       const frameBytes = job.width * job.height * 3
       const startedAt = performance.now()
       let batch: Uint8Array[] = []
       for (let i = 0; i < job.frames; i++) {
         if (canceled) return
         const res = await fetch(job.url, { headers: { Range: `bytes=${i * frameBytes}-${(i + 1) * frameBytes - 1}` } })
+        if (!res.ok && res.status !== 206) throw new Error('Não foi possível ler os quadros preparados')
         const rgb = new Uint8Array(await res.arrayBuffer())
+        if (rgb.length !== frameBytes) throw new Error('Quadro incompleto; tente novamente')
         const mask = await new Promise<Uint8Array>((resolve, reject) => {
           pending.set(i, resolve)
           fail = reject

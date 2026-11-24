@@ -404,7 +404,13 @@ export function DjView({ mixer, project, dispatch, library, onLibrary }: Props) 
             </div>
             {recOpts.audio && recOpts.clips && <p className="hint left">As trilhas Deck A e Deck B entram silenciadas, para o som não dobrar. Ative-as se apagar o áudio gravado.</p>}
             <div className="modal-actions">
-              <button className="btn" onClick={() => setRecResult(null)} disabled={saving}>
+              <button
+                className="btn"
+                onClick={async () => {
+                  if (await confirm({ title: 'Descartar a gravação do set?', message: 'A gravação será apagada e não poderá ser recuperada.', confirmLabel: 'Descartar', danger: true })) setRecResult(null)
+                }}
+                disabled={saving}
+              >
                 Descartar
               </button>
               <button className="btn primary" onClick={() => void saveSet()} disabled={saving || (!recOpts.audio && !recOpts.clips)}>
