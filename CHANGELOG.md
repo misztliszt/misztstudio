@@ -1,5 +1,19 @@
 # Novidades
 
+## 1.1.0
+
+**Desempenho**
+- A timeline ficou bem mais leve: os clipes não são mais redesenhados a cada quadro de reprodução nem a cada movimento do arrasto, e a seleção por retângulo mede os clipes uma vez só.
+- As marcas de batida de cada clipe viraram um único elemento (antes eram milhares de elementos numa música longa).
+- Afinação e curva de ducking da exportação rodam em outra thread: exportar com afinação não congela mais a janela.
+- O reverb guarda as respostas já calculadas (mexer na duração não recalcula tudo a cada valor); mexer em clipes não reconfigura mais os efeitos das trilhas.
+- A forma de onda decodifica uma mídia por vez, não é calculada para arquivos acima de 1 hora (evita estourar a memória) e uma falha passageira não fica guardada para sempre.
+
+**Disco e estabilidade**
+- Áudio limpo/processado por plugin: grava em arquivo provisório e só vira cache no fim; o mesmo processamento é reaproveitado em vez de gerar um WAV novo a cada clique; pedidos iguais ao mesmo tempo esperam o mesmo resultado.
+- Inverter clipe: falha ou cancelamento não deixam pasta de trabalho nem arquivo parcial; dois pedidos iguais não se atropelam.
+- Limpeza automática de restos de tarefas interrompidas (remoção de fundo, separação incompleta, arquivos provisórios, miniaturas antigas). Nada que um projeto possa usar é apagado.
+
 ## 1.0.3
 
 **Edição**

@@ -6,10 +6,16 @@ export const PEAKS_PER_SECOND = 100
 /** Arquivos maiores que isso não são decodificados inteiros na memória. */
 const MAX_BYTES = 400 * 1024 * 1024
 
+/** Acima disto (≈ 1 GB de PCM decodificado a 48 kHz estéreo) a forma de onda não é calculada. */
+const MAX_SECONDS = 3600
+
 const cache = new Map<string, Promise<Float32Array | null>>()
 let ctx: AudioContext | null = null
+// Uma decodificação por vez: importar várias mídias de uma vez não pode estourar a memória.
+let queue: Promise<unknown> = Promise.resolve()
 
 async function compute(media: Media): Promise<Float32Array | null> {
+  if (media.duration > MAX_SECONDS) return null
   const res = await fetch(media.url)
   if (Number(res.headers.get('content-length')) > MAX_BYTES) return null
   const buf = await res.arrayBuffer()
@@ -37,7 +43,13 @@ async function compute(media: Media): Promise<Float32Array | null> {
 export function getPeaks(media: Media) {
   let job = cache.get(media.id)
   if (!job) {
-    job = compute(media).catch(() => null)
+    const run = queue.then(() => compute(media))
+    queue = run.catch(() => undefined)
+    job = run.catch(() => {
+      // Falha (arquivo ainda não pronto, rede…) não fica guardada para sempre: a próxima tentativa refaz.
+      cache.delete(media.id)
+      return null
+    })
     cache.set(media.id, job)
   }
   return job
@@ -45,13 +57,19 @@ export function getPeaks(media: Media) {
 
 export function usePeaks(media: Media | undefined) {
   const [peaks, setPeaks] = useState<Float32Array | null>(null)
+  const eligible = !!media && media.kind !== 'image' && media.hasAudio
   useEffect(() => {
-    if (!media || media.kind === 'image' || !media.hasAudio) return
+    if (!media || !eligible) {
+      setPeaks(null) // trocou por uma mídia sem áudio: some a onda antiga
+      return
+    }
     let alive = true
     void getPeaks(media).then((p) => alive && setPeaks(p))
     return () => {
       alive = false
     }
-  }, [media])
+    // Só refaz quando a mídia muda de verdade (um novo objeto com os mesmos dados não deve refazer).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [media?.id, media?.url, eligible])
   return peaks
 }

@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AudioLines, Eye, EyeOff, Film, Magnet, Plus, Volume2, VolumeX, X, ZoomIn, ZoomOut } from 'lucide-react'
 import type { Action } from '../store'
 import { mainTrackId, maxClipDuration, projectDuration } from '../store'
 import { keyTimes } from '../anim'
-import { useClockTime } from '../clock'
+import { clock, useClockTime } from '../clock'
 import { beatTimes } from '../beats'
-import type { Clip, Project, Track } from '../types'
+import type { Clip, Media, Project, Track } from '../types'
 import { PEAKS_PER_SECOND, usePeaks } from '../waveform'
 import { formatTime } from '../format'
 
@@ -16,7 +16,6 @@ const TICK_STEPS = [0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600]
 
 interface Props {
   project: Project
-  time: number
   zoom: number
   selection: string[]
   selectedTrack: string | null
@@ -27,11 +26,11 @@ interface Props {
   onSeek: (t: number) => void
   onSelect: (ids: string[]) => void
   onZoom: (z: number) => void
-  /** Menu de contexto num clipe, ou na trilha vazia (clip = null) no instante 	ime. */
+  /** Menu de contexto num clipe, ou na trilha vazia (clip = null) no instante `time` (s, do relógio). */
   onContextMenu: (e: React.MouseEvent, clip: Clip | null, trackId: string, time: number) => void
 }
 
-export function Timeline({ project, time, zoom, selection, selectedTrack, onSelectTrack, playing, dispatch, checkpoint, onSeek, onSelect, onZoom, onContextMenu }: Props) {
+export const Timeline = memo(function Timeline({ project, zoom, selection, selectedTrack, onSelectTrack, playing, dispatch, checkpoint, onSeek, onSelect, onZoom, onContextMenu }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const innerRef = useRef<HTMLDivElement>(null)
   const [marquee, setMarquee] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
@@ -47,6 +46,17 @@ export function Timeline({ project, time, zoom, selection, selectedTrack, onSele
     let moved = false
     const target = e.currentTarget as HTMLElement
     target.setPointerCapture(e.pointerId)
+    // Mede os clipes uma vez por posição de rolagem (e não a cada movimento do mouse).
+    const scroller = scrollRef.current
+    let measured: { id: string; rect: DOMRect }[] = []
+    let measuredAt = ''
+    const measure = () => {
+      const key = `${scroller?.scrollLeft}|${scroller?.scrollTop}`
+      if (key === measuredAt) return measured
+      measuredAt = key
+      measured = [...inner.querySelectorAll<HTMLElement>('[data-clip]')].map((el) => ({ id: el.dataset.clip!, rect: el.getBoundingClientRect() }))
+      return measured
+    }
     const onMove = (ev: PointerEvent) => {
       if (!moved && Math.hypot(ev.clientX - origin.x, ev.clientY - origin.y) < 4) return
       moved = true
@@ -57,10 +67,7 @@ export function Timeline({ project, time, zoom, selection, selectedTrack, onSele
       const bottom = Math.max(origin.y, ev.clientY)
       setMarquee({ x: left - r.left, y: top - r.top, w: right - left, h: bottom - top })
       const hit: string[] = []
-      inner.querySelectorAll<HTMLElement>('[data-clip]').forEach((el) => {
-        const b = el.getBoundingClientRect()
-        if (b.right >= left && b.left <= right && b.bottom >= top && b.top <= bottom) hit.push(el.dataset.clip!)
-      })
+      for (const { id, rect: b } of measure()) if (b.right >= left && b.left <= right && b.bottom >= top && b.top <= bottom) hit.push(id)
       onSelect(additive ? [...new Set([...base, ...hit])] : hit)
     }
     const onUp = () => {
@@ -103,7 +110,8 @@ export function Timeline({ project, time, zoom, selection, selectedTrack, onSele
 
   const snapPoints = (ignore: string | string[]) => {
     const skip = new Set(Array.isArray(ignore) ? ignore : [ignore])
-    const pts = [0, time, ...(project.markers ?? []).map((m) => m.t)]
+    // O cursor vem do relógio (exato); o estado da tela só atualiza a cada 150 ms durante a reprodução.
+    const pts = [0, clock.get(), ...(project.markers ?? []).map((m) => m.t)]
     for (const c of project.clips) {
       if (skip.has(c.id)) continue
       pts.push(c.start, c.start + c.duration)
@@ -202,6 +210,13 @@ export function Timeline({ project, time, zoom, selection, selectedTrack, onSele
     window.addEventListener('pointerup', onUp)
     window.addEventListener('pointercancel', onUp)
   }
+
+  // Os ouvintes dos clipes são estáveis (leem sempre a versão mais recente): assim o ClipView memoizado
+  // não redesenha todos os clipes a cada quadro de reprodução ou a cada tick de arrasto.
+  const handlers = useRef({ down: onClipDown, menu: onContextMenu })
+  handlers.current = { down: onClipDown, menu: onContextMenu }
+  const clipDown = useCallback((e: React.PointerEvent<HTMLDivElement>, c: Clip) => handlers.current.down(e, c), [])
+  const clipMenu = useCallback((e: React.MouseEvent, c: Clip) => handlers.current.menu(e, c, c.trackId, clock.get()), [])
 
   const onLaneDrop = (e: React.DragEvent<HTMLDivElement>, track: Track) => {
     const mediaId = e.dataTransfer.getData('application/x-media-id')
@@ -349,7 +364,7 @@ export function Timeline({ project, time, zoom, selection, selectedTrack, onSele
               {project.clips
                 .filter((c) => c.trackId === track.id)
                 .map((clip) => (
-                  <ClipView key={clip.id} clip={clip} project={project} zoom={zoom} selected={selection.includes(clip.id)} onPointerDown={onClipDown} onContextMenu={(e, c) => onContextMenu(e, c, track.id, time)} />
+                  <ClipView key={clip.id} clip={clip} media={clip.mediaId ? project.media[clip.mediaId] : undefined} zoom={zoom} selected={selection.includes(clip.id)} onPointerDown={clipDown} onContextMenu={clipMenu} />
                 ))}
             </div>
           </div>
@@ -370,7 +385,7 @@ export function Timeline({ project, time, zoom, selection, selectedTrack, onSele
       </div>
     </div>
   )
-}
+})
 
 /** Batidas do clipe em tempo de timeline. */
 function clipBeats(clip: Clip, grid: { bpm: number; offset: number }) {
@@ -400,22 +415,21 @@ function hasFx(t: Track) {
   return fx.autotune.enabled || fx.transpose !== 0 || fx.comp.enabled || fx.reverb.mix > 0 || fx.eq.low !== 0 || fx.eq.mid !== 0 || fx.eq.high !== 0 || fx.pan !== 0
 }
 
-function ClipView({
+const ClipView = memo(function ClipView({
   clip,
-  project,
+  media,
   zoom,
   selected,
   onPointerDown,
   onContextMenu,
 }: {
   clip: Clip
-  project: Project
+  media: Media | undefined
   zoom: number
   selected: boolean
   onPointerDown: (e: React.PointerEvent<HTMLDivElement>, c: Clip) => void
   onContextMenu: (e: React.MouseEvent, c: Clip) => void
 }) {
-  const media = clip.mediaId ? project.media[clip.mediaId] : undefined
   const peaks = usePeaks(media)
   const width = clip.duration * zoom
   const isVisual = media?.kind === 'video' || media?.kind === 'image'
@@ -452,8 +466,7 @@ function ClipView({
         {clip.speed !== 1 && <span className="proxy-tag">{Number(clip.speed.toFixed(2))}×</span>}
         {clip.audioDetached ? <span className="proxy-tag">áudio separado</span> : clip.volume !== 1 && ` · ${Math.round(clip.volume * 100)}%`}
       </span>
-      {media?.beats &&
-        clipBeats(clip, media.beats).map((t) => <span key={t} className="clip-beat" style={{ left: (t - clip.start) * zoom }} />)}
+      {media?.beats && <BeatTicks clip={clip} grid={media.beats} zoom={zoom} />}
       {keyTimes(clip).map((t) => (
         <span key={t} className="clip-key" style={{ left: t * zoom }} />
       ))}
@@ -461,6 +474,21 @@ function ClipView({
       <div className="clip-edge right" />
     </div>
   )
+})
+
+/**
+ * Marcas das batidas num único elemento: a grade é regular, então um fundo repetido desenha as marcas
+ * (antes era um <span> por batida: ~7 mil nós de DOM numa música de 1 hora).
+ */
+function BeatTicks({ clip, grid, zoom }: { clip: Clip; grid: { bpm: number; offset: number }; zoom: number }) {
+  const speed = clip.speed || 1
+  const beatLen = 60 / grid.bpm
+  const stepPx = (beatLen / speed) * zoom
+  if (!(stepPx >= 4)) return null // marcas coladas demais não ajudam: some no zoom baixo
+  // Primeira batida dentro do clipe (tempo da mídia → posição no clipe).
+  const first = grid.offset + Math.ceil((clip.in - grid.offset) / beatLen) * beatLen
+  const phase = ((first - clip.in) / speed) * zoom
+  return <span className="clip-beats" style={{ backgroundSize: `${stepPx}px 100%`, backgroundPosition: `${phase}px 0` }} />
 }
 
 function Wave({ peaks, inPoint, duration, width, compact }: { peaks: Float32Array; inPoint: number; duration: number; width: number; compact: boolean }) {

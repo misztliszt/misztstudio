@@ -12,6 +12,7 @@ const { Downloader } = require('./downloader.cjs')
 const { AudioTools } = require('./audiotools.cjs')
 const { ExportQueue } = require('./exportqueue.cjs')
 const { writeFileAtomic } = require('./fsutil.cjs')
+const { cleanupCaches } = require('./cleanup.cjs')
 const { isLocalPath, MediaAllowlist, isTrustedUrl, corsOrigin, sanitizeSettingsPatch, hasProjectExt, norm } = require('./security.cjs')
 const { setupUpdater } = require('./updater.cjs')
 const { detectKeyFile } = require('./analysis.cjs')
@@ -687,13 +688,20 @@ app.whenReady().then(() => {
    * Versão invertida do trecho [inPoint, inPoint+duration]. Inverte em blocos de 4 s
    * (o filtro reverse guarda o bloco inteiro na memória) e junta os blocos em ordem inversa.
    */
+  const reverseJobs = new Map()
   ipcMain.handle('media:reverse', async (_e, filePath, inPoint, duration, hasAudio) => {
     if (!isLocalPath(filePath)) throw new Error('Caminho de arquivo inválido')
     const key = crypto.createHash('sha1').update(`${filePath}|${inPoint.toFixed(3)}|${duration.toFixed(3)}`).digest('hex').slice(0, 16)
     const dir = path.join(app.getPath('userData'), 'reversed')
     const out = path.join(dir, `${key}.mp4`)
+    // Duas chamadas iguais ao mesmo tempo esperam o mesmo trabalho (a segunda apagaria a pasta de trabalho da primeira).
+    if (reverseJobs.has(key)) await reverseJobs.get(key)
     if (!fs.existsSync(out)) {
       const work = path.join(dir, key)
+      const tmpOut = path.join(dir, `${key}.parcial.mp4`)
+      let done
+      reverseJobs.set(key, new Promise((r) => (done = r)))
+      try {
       fs.mkdirSync(work, { recursive: true })
       const CHUNK = 4
       const count = Math.max(1, Math.ceil(duration / CHUNK))
@@ -708,8 +716,15 @@ app.whenReady().then(() => {
       }
       const list = path.join(work, 'list.txt')
       fs.writeFileSync(list, parts.reverse().map((p) => `file '${p.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`).join('\n'))
-      await run(FFMPEG, ['-y', '-hide_banner', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', '-movflags', '+faststart', out])
-      fs.rmSync(work, { recursive: true, force: true })
+      await run(FFMPEG, ['-y', '-hide_banner', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', '-movflags', '+faststart', tmpOut])
+      fs.renameSync(tmpOut, out)
+      } finally {
+        // Em falha ou cancelamento nada fica para trás (nem a pasta de trabalho, nem o arquivo parcial).
+        fs.rmSync(work, { recursive: true, force: true })
+        fs.rmSync(tmpOut, { force: true })
+        reverseJobs.delete(key)
+        done()
+      }
     }
     return (await probeMany([out]))[0]
   })
@@ -824,6 +839,15 @@ app.whenReady().then(() => {
     mediaAllowed.addFromProject(json)
     return { json, savedAt: fs.statSync(file).mtimeMs }
   })
+
+  // Faxina de restos de tarefas interrompidas, sem atrasar a abertura da janela.
+  setTimeout(() => {
+    try {
+      cleanupCaches({ userData: app.getPath('userData'), tmp: os.tmpdir() })
+    } catch {
+      // limpeza é um extra
+    }
+  }, 30000)
 
   createWindow()
   app.on('activate', () => {

@@ -39,6 +39,29 @@ class AudioTools {
     this.helper = new StemEngine(baseDir, ffmpeg)
     // Plugins que a busca encontrou: só esses podem ser carregados (um plugin VST3 é código nativo).
     this.known = new Set()
+    // Trabalhos em andamento por arquivo de saída: duas chamadas iguais esperam o mesmo resultado.
+    this.jobs = new Map()
+  }
+
+  /** Gera `out` uma vez: grava num provisório e só renomeia no fim (um arquivo parcial nunca vira cache). */
+  once(out, make) {
+    if (fs.existsSync(out)) return Promise.resolve(out)
+    let job = this.jobs.get(out)
+    if (!job) {
+      const tmp = out.replace(/.wav$/, '.parcial.wav')
+      job = (async () => {
+        try {
+          await make(tmp)
+          fs.renameSync(tmp, out)
+          return out
+        } finally {
+          fs.rmSync(tmp, { force: true })
+          this.jobs.delete(out)
+        }
+      })()
+      this.jobs.set(out, job)
+    }
+    return job
   }
 
   assertPlugin(pluginPath) {
@@ -65,14 +88,13 @@ class AudioTools {
     const stat = fs.statSync(filePath)
     const opts = typeof level === 'string' ? CLEAN[level] || CLEAN.medium : { ...CLEAN.medium, ...level }
     const out = path.join(this.out, `clean-${this.key(filePath, stat.mtimeMs, inPoint, duration, JSON.stringify(opts))}.wav`)
-    if (!fs.existsSync(out)) {
-      await this.helper.run(
+    return this.once(out, (tmp) =>
+      this.helper.run(
         this.ffmpeg,
-        ['-y', '-hide_banner', '-loglevel', 'error', '-ss', inPoint.toFixed(3), '-t', duration.toFixed(3), '-i', filePath, '-vn', '-af', cleanFilter(opts), '-ac', '2', '-ar', '48000', '-c:a', 'pcm_s24le', out],
+        ['-y', '-hide_banner', '-loglevel', 'error', '-ss', inPoint.toFixed(3), '-t', duration.toFixed(3), '-i', filePath, '-vn', '-af', cleanFilter(opts), '-ac', '2', '-ar', '48000', '-c:a', 'pcm_s24le', tmp],
         () => {},
-      )
-    }
-    return out
+      ),
+    )
   }
 
   // ---------- VST3 ----------
@@ -156,16 +178,19 @@ class AudioTools {
   async apply(filePath, inPoint, duration, pluginPath, state) {
     this.assertPlugin(pluginPath)
     fs.mkdirSync(this.out, { recursive: true })
-    const id = this.key(filePath, inPoint, duration, pluginPath, state, Date.now())
-    const input = path.join(this.out, `vst-in-${id}.wav`)
+    // Mesmo arquivo, trecho, plugin e estado dão o mesmo resultado: reaproveita em vez de gerar outro WAV a cada clique.
+    const stat = fs.statSync(filePath)
+    const id = this.key(filePath, stat.mtimeMs, inPoint, duration, pluginPath, state)
     const out = path.join(this.out, `vst-${id}.wav`)
-    await this.extract(filePath, inPoint, duration, input)
-    try {
-      await this.py(['process', '--plugin', pluginPath, ...(state ? ['--state', state] : []), '--input', input, '--output', out])
-    } finally {
-      fs.rmSync(input, { force: true })
-    }
-    return out
+    return this.once(out, async (tmp) => {
+      const input = path.join(this.out, `vst-in-${id}.wav`)
+      await this.extract(filePath, inPoint, duration, input)
+      try {
+        await this.py(['process', '--plugin', pluginPath, ...(state ? ['--state', state] : []), '--input', input, '--output', tmp])
+      } finally {
+        fs.rmSync(input, { force: true })
+      }
+    })
   }
 }
 
