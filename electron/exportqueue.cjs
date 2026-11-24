@@ -5,7 +5,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const crypto = require('node:crypto')
-const { spawn } = require('node:child_process')
+const { spawn, killTree } = require('./procs.cjs')
 const { prepareExport } = require('./export.cjs')
 
 class ExportQueue {
@@ -57,7 +57,7 @@ class ExportQueue {
     if (job.state === 'queued') job.state = 'canceled'
     else if (job.state === 'running') {
       job.cancel = true
-      if (this.proc) this.proc.kill()
+      killTree(this.proc)
     }
     this.emit()
   }

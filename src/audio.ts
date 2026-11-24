@@ -178,7 +178,8 @@ export class AudioGraph {
       chain.out.gain.setTargetAtTime(t.muted ? 0 : t.volume, now, 0.02)
       chain.tune?.port.postMessage({ ...fx.autotune, transpose: fx.transpose })
     }
-    this.ducks = tracks.filter((t) => t.fx.duck?.enabled && t.fx.duck.source && t.fx.duck.source !== t.id).map((t) => ({ target: t.id, source: t.fx.duck.source!, depth: t.fx.duck.depth }))
+    // Só vale se a trilha de voz ainda existe (senão a música ficaria abaixada no último nível).
+    this.ducks = tracks.filter((t) => t.fx.duck?.enabled && t.fx.duck.source && t.fx.duck.source !== t.id && tracks.some((s) => s.id === t.fx.duck.source)).map((t) => ({ target: t.id, source: t.fx.duck.source!, depth: t.fx.duck.depth }))
     for (const [id, chain] of this.tracks) {
       if (!this.ducks.some((d) => d.target === id) && chain.duckLevel !== 1) {
         chain.duckLevel = 1

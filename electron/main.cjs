@@ -3,7 +3,8 @@ const path = require('node:path')
 const fs = require('node:fs')
 const os = require('node:os')
 const crypto = require('node:crypto')
-const { spawn, execFile } = require('node:child_process')
+const { execFile } = require('node:child_process')
+const { spawn, track, killAll } = require('./procs.cjs')
 const { Readable } = require('node:stream')
 const { prepareExport, buildMixdownArgs } = require('./export.cjs')
 const { StemEngine } = require('./stems.cjs')
@@ -128,10 +129,12 @@ function mediaUrl(filePath) {
 
 function run(bin, args) {
   return new Promise((resolve, reject) => {
-    execFile(bin, args, { maxBuffer: 32 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
-      if (err) reject(new Error(stderr || err.message))
-      else resolve(stdout)
-    })
+    track(
+      execFile(bin, args, { maxBuffer: 32 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
+        if (err) reject(new Error(stderr || err.message))
+        else resolve(stdout)
+      }),
+    )
   })
 }
 
@@ -198,9 +201,9 @@ function makeProxy(filePath) {
       )
       proc.stderr.on('data', (chunk) => {
         const m = /time=(\d+):(\d+):(\d+\.?\d*)/.exec(chunk.toString())
-        if (m && total > 0 && mainWindow) {
+        if (m && total > 0) {
           const t = Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3])
-          mainWindow.webContents.send('proxy:progress', filePath, Math.min(1, t / total))
+          sendUi('proxy:progress', filePath, Math.min(1, t / total))
         }
       })
       proc.on('error', reject)
@@ -266,6 +269,10 @@ function addRecent(filePath) {
 
 let mainWindow
 let exportQueue = null
+/** Envia à interface só se a janela ainda existe (senão o Electron lança "Object has been destroyed"). */
+function sendUi(channel, ...args) {
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) mainWindow.webContents.send(channel, ...args)
+}
 // O renderer avisa quando o projeto tem alterações não salvas.
 let projectDirty = false
 let closeConfirmed = false
@@ -334,8 +341,27 @@ function createWindow() {
     if (choice === 0) e.preventDefault()
     else for (const j of exportQueue.list()) exportQueue.cancel(j.id)
   })
+  mainWindow.on('closed', () => {
+    mainWindow = null
+  })
   if (isDev) mainWindow.loadURL('http://localhost:5173')
   else mainWindow.loadURL('app://bundle/index.html')
+}
+
+// Uma só instância: dar duplo clique em outro .edproj abre o projeto na janela que já está aberta
+// (duas instâncias dividiriam a mesma pasta de dados e se atropelariam).
+if (!app.requestSingleInstanceLock()) app.quit()
+else {
+  app.on('second-instance', (_e, argv) => {
+    if (!mainWindow) return
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.focus()
+    const file = projectFromArgs(argv)
+    if (file) {
+      knownProjects.add(norm(file))
+      sendUi('project:external', file)
+    }
+  })
 }
 
 app.whenReady().then(() => {
@@ -430,7 +456,7 @@ app.whenReady().then(() => {
     return { filePath, json }
   })
 
-  exportQueue = new ExportQueue(FFMPEG, (jobs) => mainWindow && mainWindow.webContents.send('export:jobs', jobs))
+  exportQueue = new ExportQueue(FFMPEG, (jobs) => sendUi('export:jobs', jobs))
   ipcMain.handle('export:start', async (_e, payload) => {
     const format = (payload.options && payload.options.format) || 'mp4'
     const FORMAT_NAMES = { mp4: 'Vídeo MP4', mov: 'Vídeo QuickTime', webm: 'Vídeo WebM', mp3: 'Áudio MP3', wav: 'Áudio WAV' }
@@ -482,7 +508,7 @@ app.whenReady().then(() => {
 
   // ---------- Áudio de estúdio ----------
   const audioTools = new AudioTools(app.getPath('userData'), FFMPEG)
-  const sendTools = (msg) => mainWindow && mainWindow.webContents.send('vst:progress', msg)
+  const sendTools = (msg) => sendUi('vst:progress', msg)
   const probeOne = async (file) => (await probeMany([file]))[0]
   ipcMain.handle('audio:clean', async (_e, filePath, inPoint, duration, level) => probeOne(await audioTools.clean(filePath, inPoint, duration, level)))
   ipcMain.handle('vst:status', () => audioTools.status())
@@ -525,7 +551,7 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('screen:hotkey', (_e, on) => {
     globalShortcut.unregister('CommandOrControl+Shift+F9')
-    if (on) globalShortcut.register('CommandOrControl+Shift+F9', () => mainWindow && mainWindow.webContents.send('screen:stop'))
+    if (on) globalShortcut.register('CommandOrControl+Shift+F9', () => sendUi('screen:stop'))
   })
   ipcMain.handle('screen:minimize', (_e, on) => {
     if (!mainWindow) return
@@ -765,10 +791,10 @@ app.whenReady().then(() => {
   ipcMain.handle('library:search', (_e, opts) => library.search(opts))
   ipcMain.handle('library:cancel', () => library.cancel())
   ipcMain.handle('library:download', async (_e, item) => {
-    const file = await library.download(item, path.join(downloader.outDir, 'Biblioteca CC'), (p) => mainWindow && mainWindow.webContents.send('library:progress', { id: item.id, progress: p }))
+    const file = await library.download(item, path.join(downloader.outDir, 'Biblioteca CC'), (p) => sendUi('library:progress', { id: item.id, progress: p }))
     return probeOne(file)
   })
-  const sendDl = (msg) => mainWindow && mainWindow.webContents.send('ytdlp:progress', msg)
+  const sendDl = (msg) => sendUi('ytdlp:progress', msg)
   ipcMain.handle('ytdlp:status', () => downloader.status())
   ipcMain.handle('ytdlp:install', () => downloader.install(sendDl))
   ipcMain.handle('ytdlp:update', () => downloader.update())
@@ -781,7 +807,7 @@ app.whenReady().then(() => {
   })
 
   const stems = new StemEngine(app.getPath('userData'), FFMPEG)
-  const sendStems = (msg) => mainWindow && mainWindow.webContents.send('stems:progress', msg)
+  const sendStems = (msg) => sendUi('stems:progress', msg)
   ipcMain.handle('stems:status', () => stems.status())
   ipcMain.handle('stems:install', (_e, variant) => stems.install(variant, sendStems))
   ipcMain.handle('stems:cancel', () => stems.cancel())
@@ -817,7 +843,11 @@ async function probeMany(paths) {
   return results
 }
 
-app.on('will-quit', () => globalShortcut.unregisterAll())
+app.on('before-quit', () => killAll())
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll()
+  killAll()
+})
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()

@@ -1,6 +1,6 @@
 import { useCallback, useReducer } from 'react'
 import type { Clip, ColorAdjust, Marker, Media, Project, TextStyle, Track, TrackFx, TrackKind, VideoEffects } from './types'
-import { ANIM_PROPS, defaultTransform } from './anim'
+import { ANIM_PROPS, defaultTransform, interpolate } from './anim'
 
 export const uid = () => Math.random().toString(36).slice(2, 10)
 
@@ -171,6 +171,44 @@ function mapKeyframes(c: Clip, fn: <T extends { t: number }>(keys: T[]) => T[]):
   return out
 }
 
+interface RetimeRange {
+  /** Intervalo do tempo local do clipe original que cabe nesta parte. */
+  lo: number
+  hi: number
+  /** Converte um tempo local do clipe original para o da parte. */
+  toLocal: (k: number) => number
+  duration: number
+}
+
+/** Keyframes de uma parte da rampa: os que caem no trecho, mais o valor interpolado nas duas bordas. */
+function retimeKeyframes(c: Clip, r: RetimeRange): Clip['keyframes'] {
+  const out: Clip['keyframes'] = {}
+  for (const p of ANIM_PROPS) {
+    const keys = c.keyframes[p]
+    if (!keys || !keys.length) continue
+    const inside = keys.filter((k) => k.t > r.lo + 1e-6 && k.t < r.hi - 1e-6).map((k) => ({ ...k, t: r.toLocal(k.t) }))
+    const ease = (keys.filter((k) => k.t <= r.lo + 1e-6).pop() ?? keys[0]).ease
+    out[p] = [{ t: 0, v: interpolate(keys, r.lo), ease }, ...inside, { t: r.duration, v: interpolate(keys, r.hi), ease: 'linear' as const }]
+  }
+  return out
+}
+
+function retimeVolumeKeys(keys: Clip['volumeKeys'], r: RetimeRange): Clip['volumeKeys'] {
+  if (!keys.length) return []
+  const sorted = [...keys].sort((x, y) => x.t - y.t)
+  const at = (t: number) => {
+    if (t <= sorted[0].t) return sorted[0].v
+    const last = sorted[sorted.length - 1]
+    if (t >= last.t) return last.v
+    const i = sorted.findIndex((k) => k.t >= t)
+    const a = sorted[i - 1]
+    const b = sorted[i]
+    return a.v + ((b.v - a.v) * (t - a.t)) / Math.max(1e-6, b.t - a.t)
+  }
+  const inside = sorted.filter((k) => k.t > r.lo + 1e-6 && k.t < r.hi - 1e-6).map((k) => ({ ...k, t: r.toLocal(k.t) }))
+  return [{ t: 0, v: at(r.lo) }, ...inside, { t: r.duration, v: at(r.hi) }]
+}
+
 export type Action =
   | { type: 'load'; project: Project }
   | { type: 'addMedia'; media: Media[] }
@@ -184,6 +222,7 @@ export type Action =
   | { type: 'addRecording'; start: number; video: Media | null; audio: { label: string; media: Media }[] }
   | { type: 'addDjSet'; start: number; audio: { label: string; media: Media } | null; decks: { label: string; muted: boolean; clips: Pick<Clip, 'mediaId' | 'start' | 'in' | 'duration' | 'speed' | 'volume' | 'volumeKeys'>[] }[] }
   | { type: 'updateClip'; id: string; patch: Partial<Clip> }
+  | { type: 'moveClips'; ids: string[]; delta: number; /** Início original de cada clipe (para arrastar com merge: o deslocamento vale desde o começo do arrasto). */ from?: Record<string, number> }
   | { type: 'setSpeed'; id: string; speed: number }
   | { type: 'toggleMarker'; t: number }
   | { type: 'updateMarker'; id: string; patch: Partial<Marker> }
@@ -406,6 +445,23 @@ function reduceCore(p: Project, a: Action): Project {
       if (!magneticMain && overlaps(p, updated.trackId, updated.start, updated.duration, clip.id)) return p
       return { ...p, clips: p.clips.map((c) => (c.id === a.id ? updated : c)) }
     }
+    case 'moveClips': {
+      // Move vários clipes juntos (mesmo deslocamento, cada um na sua trilha). Tudo ou nada: se algum
+      // bater num clipe que não faz parte da seleção, nada se move.
+      const sel = p.clips.filter((c) => a.ids.includes(c.id))
+      if (!sel.length) return p
+      const startOf = (c: Clip) => a.from?.[c.id] ?? c.start
+      const delta = Math.max(a.delta, -Math.min(...sel.map(startOf)))
+      const moved = new Map(sel.map((c) => [c.id, { ...c, start: startOf(c) + delta }]))
+      if (sel.every((c) => Math.abs(moved.get(c.id)!.start - c.start) < 1e-9)) return p
+      const main = p.magnetic ? mainTrackId(p) : null
+      const others = p.clips.filter((c) => !moved.has(c.id))
+      for (const m of moved.values()) {
+        if (m.trackId === main) continue
+        if (others.some((o) => o.trackId === m.trackId && m.start < o.start + o.duration - 1e-6 && o.start < m.start + m.duration - 1e-6)) return p
+      }
+      return { ...p, clips: p.clips.map((c) => moved.get(c.id) ?? c) }
+    }
     case 'rippleDelete': {
       // Remove e puxa para a esquerda o que vem depois, na mesma trilha, fechando os buracos.
       const removed = p.clips.filter((c) => a.ids.includes(c.id))
@@ -424,6 +480,8 @@ function reduceCore(p: Project, a: Action): Project {
       // Divide o clipe no cursor e insere uma imagem parada, empurrando o resto da trilha.
       const clip = p.clips.find((c) => c.id === a.clipId)
       if (!clip) return p
+      // Perto demais da borda a divisão não acontece e o quadro congelado ficaria por cima do clipe.
+      if (a.at - clip.start <= MIN_CLIP || a.at >= clip.start + clip.duration - MIN_CLIP) return p
       let next = reduce(p, { type: 'split', time: a.at, ids: [clip.id] })
       const media = { ...next.media, [a.media.id]: a.media }
       const shifted = next.clips.map((c) => (c.trackId === clip.trackId && c.start >= a.at - 1e-6 ? { ...c, start: c.start + a.duration } : c))
@@ -461,6 +519,8 @@ function reduceCore(p: Project, a: Action): Project {
       let t = clip.start
       const parts: Clip[] = a.factors.map((f, i) => {
         const speed = Math.min(4, Math.max(0.25, base * f))
+        // Os keyframes seguem a mídia: cada parte fica com os que caem no seu trecho (com o valor nas bordas).
+        const range = { lo: (i * seg) / base, hi: ((i + 1) * seg) / base, toLocal: (k: number) => (k * base - i * seg) / speed, duration: seg / speed }
         const part: Clip = {
           ...clip,
           id: i === 0 ? clip.id : uid(),
@@ -468,8 +528,8 @@ function reduceCore(p: Project, a: Action): Project {
           in: clip.in + i * seg,
           duration: seg / speed,
           speed,
-          keyframes: {},
-          volumeKeys: [],
+          keyframes: retimeKeyframes(clip, range),
+          volumeKeys: retimeVolumeKeys(clip.volumeKeys, range),
           fadeIn: i === 0 ? clip.fadeIn : 0,
           fadeOut: i === a.factors.length - 1 ? clip.fadeOut : 0,
           transitionIn: i === 0 ? clip.transitionIn : { ...clip.transitionIn, type: 'none' },
@@ -519,6 +579,8 @@ function reduceCore(p: Project, a: Action): Project {
       let next = p
       const placed: Clip[] = []
       for (const c of a.clips) {
+        // Clipe de mídia cuja mídia foi removida do projeto não pode ser colado (ficaria invisível e quebraria a exportação).
+        if (!c.text && (!c.mediaId || !p.media[c.mediaId])) continue
         const kind = p.tracks.find((t) => t.id === c.trackId)?.kind ?? (c.mediaId && p.media[c.mediaId]?.kind === 'audio' ? 'audio' : 'video')
         const busy = (q: Project, trackId: string) => overlaps(q, trackId, c.start, c.duration) || placed.some((o) => o.trackId === trackId && c.start < o.start + o.duration - 1e-6 && o.start < c.start + c.duration - 1e-6)
         let trackId = c.trackId
@@ -557,6 +619,8 @@ function reduceCore(p: Project, a: Action): Project {
             volumeKeys: keysB,
             // Mantém todos os keyframes (deslocados) para a animação continuar sem salto.
             keyframes: mapKeyframes(c, (keys) => shiftKeys(keys, offset)),
+            // Os tempos das palavras são relativos ao início do clipe: na segunda metade andam junto.
+            text: c.text && c.text.words ? { ...c.text, words: c.text.words.map((w) => ({ ...w, t0: w.t0 - offset, t1: w.t1 - offset })) } : c.text,
           })
         } else {
           clips.push(c)
@@ -571,7 +635,12 @@ function reduceCore(p: Project, a: Action): Project {
     case 'updateTrack':
       return { ...p, tracks: p.tracks.map((t) => (t.id === a.id ? { ...t, ...a.patch } : t)) }
     case 'removeTrack':
-      return { ...p, tracks: p.tracks.filter((t) => t.id !== a.id), clips: p.clips.filter((c) => c.trackId !== a.id) }
+      return {
+        ...p,
+        // O ducking que usava esta trilha como voz é desligado (senão a música ficaria abaixada para sempre).
+        tracks: p.tracks.filter((t) => t.id !== a.id).map((t) => (t.fx.duck.source === a.id ? { ...t, fx: { ...t.fx, duck: { ...t.fx.duck, enabled: false, source: null } } } : t)),
+        clips: p.clips.filter((c) => c.trackId !== a.id),
+      }
     case 'settings':
       return { ...p, ...a.patch }
   }
@@ -615,6 +684,8 @@ export function actionLabel(a: Action, p: Project): string {
       if (has('volume', 'volumeKeys', 'fadeIn', 'fadeOut')) return 'Volume do clipe'
       return 'Editar clipe'
     }
+    case 'moveClips':
+      return a.ids.length > 1 ? `Mover ${a.ids.length} clipes` : 'Mover clipe'
     case 'setSpeed':
       return `Velocidade ${String(Math.round(a.speed * 100) / 100).replace('.', ',')}×`
     case 'toggleMarker':

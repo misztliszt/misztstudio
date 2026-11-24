@@ -63,8 +63,10 @@
       const W = this.win
       const diff = 1 - ratio
       if (Math.abs(diff) < 0.002) {
-        // Sem correção: volta devagar para uma única leitura (evita filtro pente).
-        this.p += (0.5 - this.p) * 0.0005
+        // Sem correção: volta bem devagar para uma única leitura (evita filtro pente). A taxa é baixa de
+        // propósito: com 0,0005 o atraso variava rápido o bastante para desafinar a nota em mais de um
+        // semitom por ~50 ms toda vez que a voz voltava ao tom certo; com 0,000002 o desvio fica abaixo de 2 cents.
+        this.p += (0.5 - this.p) * 0.000002
       } else {
         this.p += diff / W
       }
@@ -172,6 +174,13 @@
       const { enabled } = this.params
       const transpose = this.params.transpose || 0
       if (!enabled && transpose === 0) {
+        // Mesmo em bypass, o áudio entra nos buffers: ao religar, o efeito não lê som antigo (estalo/fantasma).
+        for (let i = 0; i < n; i++) {
+          this.left.buf[this.left.w++ & MASK] = inL[i]
+          this.right.buf[this.right.w++ & MASK] = inR ? inR[i] : inL[i]
+        }
+        this.ratio = 1
+        this.target = 1
         if (outL !== inL) outL.set(inL.subarray(0, n))
         if (outR && inR && outR !== inR) outR.set(inR.subarray(0, n))
         return

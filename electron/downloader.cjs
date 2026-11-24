@@ -3,7 +3,8 @@
 
 const fs = require('node:fs')
 const path = require('node:path')
-const { spawn, execFile } = require('node:child_process')
+const { execFile } = require('node:child_process')
+const { spawn, killTree, lineFeeder } = require('./procs.cjs')
 const { Readable } = require('node:stream')
 const { pipeline } = require('node:stream/promises')
 const crypto = require('node:crypto')
@@ -37,31 +38,37 @@ class Downloader {
     this.exe = path.join(this.dir, isWin ? 'yt-dlp.exe' : 'yt-dlp')
     this.ffmpegDir = path.dirname(ffmpegPath)
     this.outDir = outDir
-    this.proc = null
+    // Vários processos podem rodar ao mesmo tempo (um download e uma consulta): Cancelar encerra todos.
+    this.procs = new Set()
     this.abort = null
   }
 
   run(args, { onLine, timeout } = {}) {
     return new Promise((resolve, reject) => {
       const proc = spawn(this.exe, args, { windowsHide: true, env: { ...process.env, PYTHONIOENCODING: 'utf-8' } })
-      this.proc = proc
+      this.procs.add(proc)
       let out = ''
       let err = ''
-      const timer = timeout ? setTimeout(() => proc.kill(), timeout) : null
-      const feed = (chunk, stream) => {
-        const text = chunk.toString('utf8')
-        if (stream === 'out') out += text
-        else err = (err + text).slice(-4000)
-        if (onLine) for (const line of text.split(/[\r\n]+/)) if (line.trim()) onLine(line, stream)
-      }
-      proc.stdout.on('data', (c) => feed(c, 'out'))
-      proc.stderr.on('data', (c) => feed(c, 'err'))
+      const timer = timeout ? setTimeout(() => killTree(proc), timeout) : null
+      // utf-8 inteiro e linhas inteiras: um título com acento cortado no meio do bloco não vira lixo.
+      proc.stdout.setEncoding('utf8')
+      proc.stderr.setEncoding('utf8')
+      const lines = lineFeeder((line, stream) => onLine && onLine(line, stream))
+      proc.stdout.on('data', (text) => {
+        out += text
+        lines.push('out', text)
+      })
+      proc.stderr.on('data', (text) => {
+        err = (err + text).slice(-4000)
+        lines.push('err', text)
+      })
       proc.on('error', (e) => {
-        this.proc = null
+        this.procs.delete(proc)
         reject(e)
       })
       proc.on('close', (code) => {
-        this.proc = null
+        this.procs.delete(proc)
+        lines.flush()
         if (timer) clearTimeout(timer)
         if (code === 0) resolve(out)
         else reject(new Error(cleanError(err) || `yt-dlp saiu com código ${code}`))
@@ -207,7 +214,7 @@ class Downloader {
 
   cancel() {
     if (this.abort) this.abort.abort()
-    if (this.proc) this.proc.kill()
+    for (const proc of this.procs) killTree(proc)
   }
 }
 

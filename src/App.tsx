@@ -185,6 +185,8 @@ export function App() {
     if (playing) engine.update(clock.get(), true)
   }, [engine, playing])
   useEffect(() => () => engine.dispose(), [engine])
+  // Ao fechar o programa/recarregar, libera o contexto de áudio do modo DJ (ele roda desde a primeira visita).
+  useEffect(() => () => djRef.current?.dispose(), [])
 
   const seek = useCallback((t: number) => {
     const clamped = Math.max(0, t)
@@ -251,11 +253,13 @@ export function App() {
   const importMedia = async () => addProbed(await window.api.importMedia())
 
   // ---------- Edição ----------
+  // O estado `time` só atualiza a cada 150 ms durante a reprodução; as edições usam o relógio, que é exato.
   const split = useCallback(() => {
-    const under = project.clips.filter((c) => time > c.start && time < c.start + c.duration)
+    const at = clock.get()
+    const under = project.clips.filter((c) => at > c.start && at < c.start + c.duration)
     const ids = selection.length ? under.filter((c) => selection.includes(c.id)).map((c) => c.id) : under.map((c) => c.id)
-    if (ids.length) dispatch({ type: 'split', time, ids })
-  }, [project.clips, selection, time, dispatch])
+    if (ids.length) dispatch({ type: 'split', time: at, ids })
+  }, [project.clips, selection, dispatch])
 
   const removeSelected = useCallback(() => {
     if (!selection.length) return
@@ -264,11 +268,11 @@ export function App() {
   }, [selection, dispatch])
 
   const addText = useCallback(
-    (at = time, trackId?: string) => {
+    (at = clock.get(), trackId?: string) => {
       dispatch({ type: 'addText', start: at, trackId })
       setSelectedTrack(null)
     },
-    [dispatch, time],
+    [dispatch],
   )
 
   // ---------- Área de transferência (clipes) ----------
@@ -288,7 +292,7 @@ export function App() {
 
   /** Cola os clipes copiados a partir de `at`, mantendo as distâncias entre eles. */
   const paste = useCallback(
-    (at = time, trackId?: string) => {
+    (at = clock.get(), trackId?: string) => {
       const src = clipboard.current
       if (!src.length) return
       const first = Math.min(...src.map((c) => c.start))
@@ -300,7 +304,7 @@ export function App() {
       dispatch({ type: 'insertClips', clips })
       setSelection(clips.map((c) => c.id))
     },
-    [time, project.tracks, dispatch],
+    [project.tracks, dispatch],
   )
 
   const duplicate = useCallback(
@@ -339,7 +343,11 @@ export function App() {
     async (clip: Clip) => {
       const media = clip.mediaId ? project.media[clip.mediaId] : undefined
       if (!media || media.kind !== 'video') return
-      const at = time > clip.start && time < clip.start + clip.duration ? time : clip.start
+      const at = clock.get()
+      if (at - clip.start <= 0.1 || at >= clip.start + clip.duration - 0.1) {
+        toast.info('Posicione o cursor dentro do clipe', { detail: 'O quadro é congelado no ponto do cursor, longe das bordas do clipe.' })
+        return
+      }
       const src = clip.in + (at - clip.start) * (clip.speed || 1)
       const r = await window.api.extractFrame(media.path, src)
       if (!r.ok) {
@@ -349,7 +357,7 @@ export function App() {
       dispatch({ type: 'freezeFrame', clipId: clip.id, at, media: { ...r.media, id: uid(), name: `Quadro de ${media.name}` }, duration: 2 })
       toast.success('Quadro congelado', { detail: '2 s de imagem parada inseridos no cursor.' })
     },
-    [project.media, time, dispatch, toast],
+    [project.media, dispatch, toast],
   )
 
   const [reversing, setReversing] = useState<string | null>(null)
@@ -552,6 +560,10 @@ export function App() {
     [project, filePath, toast],
   )
 
+  // Duplo clique em outro .edproj com o programa aberto: abre aqui (pergunta antes de descartar o atual).
+  const openRecentRef = useRef<(path: string) => void>(() => {})
+  useEffect(() => window.api.onOpenProject((p) => openRecentRef.current(p)), [])
+
   // Avisa o programa se há alterações não salvas (ele pergunta antes de fechar a janela).
   useEffect(() => {
     void window.api.setDirty(dirty).catch(() => undefined)
@@ -642,6 +654,8 @@ export function App() {
       toast.error('Não foi possível abrir o projeto', { detail: errorText(err) })
     }
   }
+
+  openRecentRef.current = (p) => void openRecent(p)
 
   const newFromTemplate = async (t: Template) => {
     if (!(await canDiscard())) return
@@ -757,6 +771,8 @@ export function App() {
       const combo = comboOf(e)
       const id = combo ? keymap.get(combo) : undefined
       if (!id) return
+      // Segurar a tecla só repete o que faz sentido repetir (desfazer, andar quadro a quadro); o resto (play, marcador, dividir…) age uma vez.
+      if (e.repeat && !['undo', 'redo', 'frameBack', 'frameForward', 'secondBack', 'secondForward', 'back5'].includes(id)) return
       switch (id) {
         case 'undo':
           undo()
@@ -816,7 +832,7 @@ export function App() {
           removeSelected()
           break
         case 'marker':
-          dispatch({ type: 'toggleMarker', t: time })
+          dispatch({ type: 'toggleMarker', t: clock.get() })
           break
         case 'pause':
           if (playing) togglePlay()

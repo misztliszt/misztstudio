@@ -423,6 +423,8 @@ declare global {
       probeFiles(files: File[]): Promise<ProbeResult[]>
       saveProject(json: string, filePath?: string | null): Promise<string | null>
       openProject(): Promise<{ filePath: string; json: string } | null>
+      /** Um projeto foi aberto de fora (duplo clique num .edproj com o programa já aberto). Devolve a função para cancelar. */
+      onOpenProject(cb: (filePath: string) => void): () => void
       /** Avisa o programa se o projeto tem alterações não salvas (ele pergunta ao fechar a janela). */
       setDirty(dirty: boolean): Promise<void>
       /** Para cada caminho, se o arquivo ainda existe no disco. */

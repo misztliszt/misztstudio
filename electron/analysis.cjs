@@ -1,6 +1,6 @@
 // Análises de áudio feitas no processo principal (decodificação pelo FFmpeg).
 
-const { spawn } = require('node:child_process')
+const { spawn } = require('./procs.cjs')
 const { detectKey } = require('../src/dsp/key-core.js')
 
 /** Decodifica um trecho como PCM mono float32. */

@@ -16,7 +16,11 @@ export function ExportQueue() {
   const seen = useRef(new Map<string, ExportJob['state']>())
 
   useEffect(() => {
-    void window.api.listExports().then(setJobs)
+    // Trabalhos que já terminaram antes de este componente existir não geram aviso (só os que terminarem agora).
+    void window.api.listExports().then((list) => {
+      for (const j of list) if (!seen.current.has(j.id)) seen.current.set(j.id, j.state)
+      setJobs(list)
+    })
     return window.api.onExportJobs((list) => {
       setJobs(list)
       // Avisa uma vez quando cada trabalho termina.

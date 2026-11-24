@@ -72,6 +72,10 @@ export function LiveMicDialog({ live, onClose }: Props) {
         if (err instanceof DOMException && err.name === 'NotAllowedError') {
           setBlocked(true)
           setError('O Windows está bloqueando o microfone para programas da área de trabalho. Ative em Configurações → Privacidade → Microfone.')
+        } else if (err instanceof DOMException && err.name === 'NotFoundError') {
+          setError('Nenhum microfone foi encontrado neste computador.')
+        } else if (err instanceof DOMException && err.name === 'NotReadableError') {
+          setError('Não foi possível ler os microfones: outro programa pode estar usando o dispositivo.')
         }
       }
     }
@@ -89,11 +93,18 @@ export function LiveMicDialog({ live, onClose }: Props) {
   useEffect(() => {
     live.onReading = setReading
     live.onGate = setGateOpen
+    live.onLost = () => setError('O microfone foi desconectado e o efeito parou. Reconecte-o e clique em Ligar.')
+    live.onMonitorError = (err) => {
+      setS((cur) => ({ ...cur, monitor: false }))
+      setError(`Não foi possível ligar o retorno nos fones: ${err instanceof Error ? err.message : String(err)}`)
+    }
     const off = live.subscribe(() => setRunning(live.running))
     const tick = () => {
       setLevels((l) => {
         const v = live.levels()
-        return { input: Math.max(v.input, l.input * 0.88), output: Math.max(v.output, l.output * 0.88) }
+        const next = { input: Math.max(v.input, l.input * 0.88), output: Math.max(v.output, l.output * 0.88) }
+        // Sem mudança visível não renderiza de novo (o diálogo inteiro redesenharia 60 vezes por segundo à toa).
+        return Math.abs(next.input - l.input) < 0.004 && Math.abs(next.output - l.output) < 0.004 ? l : next
       })
       raf.current = requestAnimationFrame(tick)
     }
@@ -102,6 +113,8 @@ export function LiveMicDialog({ live, onClose }: Props) {
       cancelAnimationFrame(raf.current)
       live.onReading = null
       live.onGate = null
+      live.onLost = null
+      live.onMonitorError = null
       off()
     }
   }, [live])
@@ -115,7 +128,25 @@ export function LiveMicDialog({ live, onClose }: Props) {
       return next
     })
   }
+  /** O retorno nos fones falhou (fone desconectado, saída ocupada): desliga o retorno e explica. */
+  const monitorFailed = (err: unknown) => {
+    update({ monitor: false })
+    setError(`Não foi possível ligar o retorno nos fones: ${err instanceof Error ? err.message : String(err)}`)
+  }
   const tune = (patch: Partial<LiveSettings['tune']>) => update({ tune: { ...s.tune, ...patch } })
+
+  /** Mensagem em português para uma falha ao abrir microfone/saída. */
+  const liveError = (err: unknown) => {
+    const name = err instanceof DOMException ? err.name : ''
+    setBlocked(name === 'NotAllowedError')
+    return name === 'NotAllowedError'
+      ? 'O Windows está bloqueando o microfone para programas da área de trabalho. Ative em Configurações → Privacidade → Microfone.'
+      : name === 'NotFoundError' || name === 'OverconstrainedError'
+        ? 'Microfone não encontrado. Escolha outro na lista.'
+        : name === 'NotReadableError'
+          ? 'O microfone está em uso por outro programa. Feche-o e tente de novo.'
+          : `Não foi possível ligar: ${err instanceof Error ? err.message : String(err)}`
+  }
 
   const start = async () => {
     setBusy(true)
@@ -124,15 +155,7 @@ export function LiveMicDialog({ live, onClose }: Props) {
       await live.start(s)
       saveLive(s)
     } catch (err) {
-      const name = err instanceof DOMException ? err.name : ''
-      setError(
-        name === 'NotAllowedError'
-          ? 'O Windows está bloqueando o microfone para programas da área de trabalho. Ative em Configurações → Privacidade → Microfone.'
-          : name === 'NotFoundError' || name === 'OverconstrainedError'
-            ? 'Microfone não encontrado. Escolha outro na lista.'
-            : `Não foi possível ligar: ${err instanceof Error ? err.message : String(err)}`,
-      )
-      setBlocked(name === 'NotAllowedError')
+      setError(liveError(err))
     } finally {
       setBusy(false)
       setRunning(live.running)
@@ -143,7 +166,13 @@ export function LiveMicDialog({ live, onClose }: Props) {
     const next = { ...s, ...patch }
     setS(next)
     saveLive(next)
-    if (live.running) void live.start(next).catch((err) => setError(String(err instanceof Error ? err.message : err)))
+    if (live.running) {
+      setBusy(true)
+      void live
+        .start(next)
+        .catch((err) => setError(liveError(err)))
+        .finally(() => setBusy(false))
+    }
   }
 
   const note = reading && reading.f0 > 0 ? midiToName(hzToMidi(reading.f0)) : '—'
@@ -206,7 +235,7 @@ export function LiveMicDialog({ live, onClose }: Props) {
               checked={s.monitor}
               onChange={(v) => {
                 update({ monitor: v })
-                if (live.running) void live.setMonitor(v, s.monitorOutput)
+                if (live.running) void live.setMonitor(v, s.monitorOutput).catch(monitorFailed)
               }}
               label="Ouvir minha voz processada (retorno)"
             />
@@ -216,7 +245,7 @@ export function LiveMicDialog({ live, onClose }: Props) {
                 options={[{ value: 'default', label: 'Saída padrão (fones)' }, ...outputs.filter((d) => d.deviceId !== s.output).map((d) => ({ value: d.deviceId, label: d.label || 'Saída' }))]}
                 onChange={(v) => {
                   update({ monitorOutput: v })
-                  if (live.running) void live.setMonitor(true, v)
+                  if (live.running) void live.setMonitor(true, v).catch(monitorFailed)
                 }}
               />
             )}

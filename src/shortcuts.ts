@@ -80,7 +80,7 @@ export const SHORTCUTS: ShortcutDef[] = [
 const MODIFIERS = new Set(['Control', 'Shift', 'Alt', 'Meta'])
 
 /** Combinação normalizada de uma tecla pressionada (ex.: "Ctrl+Shift+S"), ou null só com modificadores. */
-export function comboOf(e: Pick<KeyboardEvent, 'key' | 'code' | 'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey'>) {
+export function comboOf(e: Pick<KeyboardEvent, 'key' | 'code' | 'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey'> & { getModifierState?: (key: string) => boolean }) {
   if (MODIFIERS.has(e.key)) return null
   let key = e.code === 'Space' ? 'Space' : e.key
   if (key.length === 1) key = key.toUpperCase()
@@ -88,8 +88,10 @@ export function comboOf(e: Pick<KeyboardEvent, 'key' | 'code' | 'ctrlKey' | 'met
   if (/^Key[A-Z]$/.test(e.code)) key = e.code.slice(3)
   if (/^Digit\d$/.test(e.code)) key = e.code.slice(5)
   const parts = []
-  if (e.ctrlKey || e.metaKey) parts.push('Ctrl')
-  if (e.altKey) parts.push('Alt')
+  // AltGr (teclado ABNT2 e outros) chega como Ctrl+Alt: não é um atalho com Ctrl+Alt, é só a tecla do símbolo.
+  const altGr = !!e.getModifierState && e.getModifierState('AltGraph') && key.length === 1 && !/^[A-Z0-9]$/.test(key)
+  if ((e.ctrlKey || e.metaKey) && !altGr) parts.push('Ctrl')
+  if (e.altKey && !altGr) parts.push('Alt')
   if (e.shiftKey) parts.push('Shift')
   parts.push(key)
   return parts.join('+')

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ArrowLeft, AudioLines, Download, Film, FolderOpen, Link2, RefreshCw, Search, ShieldCheck, Sparkles } from 'lucide-react'
 import type { LinkInfo, ProbeResult, SearchResult } from '../types'
 import { formatTime } from '../format'
@@ -13,7 +13,7 @@ const PRESETS: { id: Preset; label: string; detail: string; icon: typeof Film }[
 
 const isUrl = (t: string) => /^https?:\/\//i.test(t.trim())
 const views = (n: number | null) =>
-  n === null ? null : n >= 1e9 ? `${(n / 1e9).toFixed(1)} bi de views` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} mi de views` : n >= 1e3 ? `${Math.round(n / 1e3)} mil views` : `${n} views`
+  n === null ? null : n >= 1e9 ? `${(n / 1e9).toFixed(1)} bi de visualizações` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} mi de visualizações` : n >= 1e3 ? `${Math.round(n / 1e3)} mil visualizações` : `${n} visualizações`
 
 const errorText = (err: unknown) => String(err instanceof Error ? err.message : err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
 
@@ -47,7 +47,10 @@ export function LinkImportDialog({ onDone, onClose }: Props) {
       .catch(() => {})
   }, [])
 
+  /** O usuário clicou em Cancelar: o erro que o yt-dlp devolve ao ser interrompido não deve aparecer. */
+  const canceled = useRef(false)
   const run = async <T,>(kind: NonNullable<typeof busy>, fn: () => Promise<T>) => {
+    canceled.current = false
     setError(null)
     setBusy(kind)
     setProgress(null)
@@ -55,7 +58,9 @@ export function LinkImportDialog({ onDone, onClose }: Props) {
       return await fn()
     } catch (err) {
       const msg = errorText(err)
-      if (!/abort|killed|null/i.test(msg)) setError(msg)
+      // Só o cancelamento pedido pelo usuário fica em silêncio; qualquer outro erro (mesmo contendo "null") aparece.
+      if (canceled.current) canceled.current = false
+      else setError(msg)
       return undefined
     } finally {
       setBusy(null)
@@ -250,7 +255,10 @@ export function LinkImportDialog({ onDone, onClose }: Props) {
           )}
           <div className="modal-actions-right">
             {busy === 'download' || busy === 'install' ? (
-              <button className="btn" onClick={() => window.api.ytdlpCancel()}>
+              <button className="btn" onClick={() => {
+                canceled.current = true
+                void window.api.ytdlpCancel()
+              }}>
                 Cancelar
               </button>
             ) : (

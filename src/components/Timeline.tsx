@@ -101,10 +101,11 @@ export function Timeline({ project, time, zoom, selection, selectedTrack, onSele
     return out
   }, [step, zoom, contentWidth])
 
-  const snapPoints = (ignore: string) => {
+  const snapPoints = (ignore: string | string[]) => {
+    const skip = new Set(Array.isArray(ignore) ? ignore : [ignore])
     const pts = [0, time, ...(project.markers ?? []).map((m) => m.t)]
     for (const c of project.clips) {
-      if (c.id === ignore) continue
+      if (skip.has(c.id)) continue
       pts.push(c.start, c.start + c.duration)
       // Ímã nas batidas das músicas analisadas.
       const grid = c.mediaId ? project.media[c.mediaId]?.beats : null
@@ -146,7 +147,10 @@ export function Timeline({ project, time, zoom, selection, selectedTrack, onSele
     onSelect(sel)
 
     const startX = e.clientX
-    const pts = snapPoints(clip.id)
+    // Vários clipes selecionados: o arrasto move o grupo inteiro (cada um na sua trilha).
+    const group = mode === 'move' && sel.length > 1 && sel.includes(clip.id) ? sel : null
+    const groupFrom = group ? Object.fromEntries(project.clips.filter((c) => group.includes(c.id)).map((c) => [c.id, c.start])) : null
+    const pts = snapPoints(group ?? clip.id)
     const kind = project.tracks.find((t) => t.id === clip.trackId)?.kind
     let moved = false
     const target = e.currentTarget
@@ -164,6 +168,10 @@ export function Timeline({ project, time, zoom, selection, selectedTrack, onSele
         const s1 = snap(start, pts)
         const s2 = snap(start + clip.duration, pts) - clip.duration
         start = Math.abs(s1 - start) <= Math.abs(s2 - start) ? s1 : s2
+        if (group && groupFrom) {
+          dispatch({ type: 'moveClips', ids: group, delta: start - clip.start, from: groupFrom }, true)
+          return
+        }
         const lane = document.elementFromPoint(ev.clientX, ev.clientY)?.closest<HTMLElement>('[data-track]')
         const trackId = lane && lane.dataset.kind === kind ? lane.dataset.track! : clip.trackId
         dispatch({ type: 'updateClip', id: clip.id, patch: { start, trackId } }, true)
