@@ -1,5 +1,10 @@
 # Novidades
 
+## 1.2.1
+
+**Segurança**
+- O Electron foi atualizado da versão 33 (fora do suporte de segurança) para a 45.5.0 (Chromium 156, Node 24), com a versão fixada. Isso traz as correções de segurança do navegador embutido, usado ao importar mídia e abrir links.
+
 ## 1.2.0
 
 **Acessibilidade**
