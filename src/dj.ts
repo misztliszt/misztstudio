@@ -57,6 +57,10 @@ export class Deck {
   cuePoint = 0
   loop: { start: number; end: number; beats: number } | null = null
   hotcues: (HotCue | null)[] = Array(8).fill(null)
+  /** Avisa quando um hot cue é criado ou apagado (a interface grava na mídia do projeto). */
+  onCuesChange?: () => void
+  /** Número da carga em andamento: uma carga mais nova invalida a anterior. */
+  private loadSeq = 0
   volume = 0.8
   filter = 0
   eq = { low: 0, mid: 0, high: 0 }
@@ -114,6 +118,8 @@ export class Deck {
 
   /** Carrega uma faixa: um arquivo ou vários stems tocando juntos. */
   async load(track: DeckTrack, parts: { url: string; name: string }[], cues: HotCue[] = []) {
+    if (!parts.length) throw new Error('Nenhum arquivo de áudio para carregar')
+    const seq = ++this.loadSeq
     this.closeSegment()
     this.unload()
     this.track = track
@@ -138,12 +144,21 @@ export class Deck {
       this.closeSegment()
       this.onChange?.()
     })
-    await new Promise<void>((resolve) => {
+    const failed = await new Promise<boolean>((resolve) => {
       const el = this.els[0]
-      if (el.readyState >= 1) return resolve()
-      el.addEventListener('loadedmetadata', () => resolve(), { once: true })
-      el.addEventListener('error', () => resolve(), { once: true })
+      if (el.readyState >= 1) return resolve(false)
+      el.addEventListener('loadedmetadata', () => resolve(false), { once: true })
+      el.addEventListener('error', () => resolve(true), { once: true })
+      // Se outra carga trocou este elemento no meio do caminho, ele é descartado e esta promessa termina aqui.
+      el.addEventListener('emptied', () => resolve(false), { once: true })
     })
+    if (seq !== this.loadSeq) return // outra faixa foi carregada enquanto esta abria
+    if (failed || !(this.els[0].duration > 0)) {
+      this.unload()
+      this.track = null
+      this.onChange?.()
+      throw new Error('Não foi possível abrir o arquivo de áudio (formato não suportado ou arquivo movido)')
+    }
     this.onChange?.()
   }
 
@@ -221,12 +236,14 @@ export class Deck {
     } else {
       this.hotcues[i] = { time: this.playing ? this.time : this.snap(this.time), name: '', color: CUE_COLORS[i] }
       this.onChange?.()
+      this.onCuesChange?.()
     }
   }
 
   clearHotcue(i: number) {
     this.hotcues[i] = null
     this.onChange?.()
+    this.onCuesChange?.()
   }
 
   /** Loop automático de N batidas a partir da batida atual (ou sai do loop). */
@@ -302,7 +319,9 @@ export class Deck {
   /** Iguala o BPM ao do outro deck e alinha as batidas. */
   sync(master: Deck) {
     if (!this.track?.bpm || !master.bpm) return false
-    let rate = master.bpm / this.track.bpm
+    // O andamento "de verdade" do outro deck, sem o empurrão temporário (bend) que ele esteja recebendo.
+    const target = master.track?.bpm ? master.track.bpm * master.rate : master.bpm
+    let rate = target / this.track.bpm
     // Meio/dobro do andamento quando fica mais perto (ex.: 70 contra 140 BPM).
     if (rate > 1.4) rate /= 2
     else if (rate < 0.7) rate *= 2
@@ -382,6 +401,10 @@ export class DjMixer {
   readonly ctx: AudioContext
   readonly decks: [Deck, Deck]
   readonly master: GainNode
+  /** Limitador na saída: dois decks somados (crossfader no meio, EQ com ganho) não estouram mais. */
+  private readonly limiter: DynamicsCompressorNode
+  /** Volume do master (0–1,5), para a interface mostrar o valor certo ao voltar à tela. */
+  masterValue = 1
   private readonly analyser: AnalyserNode
   private readonly dest: MediaStreamAudioDestinationNode
   private buf = new Float32Array(1024)
@@ -397,9 +420,16 @@ export class DjMixer {
     this.analyser = this.ctx.createAnalyser()
     this.analyser.fftSize = 1024
     this.dest = this.ctx.createMediaStreamDestination()
-    this.master.connect(this.analyser)
-    this.master.connect(this.ctx.destination)
-    this.master.connect(this.dest)
+    this.limiter = this.ctx.createDynamicsCompressor()
+    this.limiter.threshold.value = -2
+    this.limiter.knee.value = 0
+    this.limiter.ratio.value = 20
+    this.limiter.attack.value = 0.003
+    this.limiter.release.value = 0.12
+    this.master.connect(this.limiter)
+    this.limiter.connect(this.analyser)
+    this.limiter.connect(this.ctx.destination)
+    this.limiter.connect(this.dest)
     this.decks = [new Deck('A', this.ctx, this.master), new Deck('B', this.ctx, this.master)]
     this.setCrossfader(0)
     const loop = () => {
@@ -420,6 +450,7 @@ export class DjMixer {
   }
 
   setMaster(v: number) {
+    this.masterValue = v
     this.master.gain.setTargetAtTime(v, this.ctx.currentTime, 0.01)
   }
 
@@ -461,10 +492,12 @@ export class DjMixer {
     return { audio: new Blob(this.chunks, { type: 'audio/webm' }), decks, duration }
   }
 
+  /** Libera o áudio do mixer (decks, gravação e o contexto de áudio). */
   dispose() {
     cancelAnimationFrame(this.raf)
+    if (this.recorder) void this.stopRecording().catch(() => undefined)
     for (const d of this.decks) d.dispose()
-    void this.ctx.close()
+    void this.ctx.close().catch(() => undefined)
   }
 }
 

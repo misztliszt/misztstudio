@@ -144,7 +144,9 @@ export function NumberField({
             onFocus={(e) => e.target.select()}
             onBlur={(e) => {
               const v = Number(e.target.value)
-              if (Number.isFinite(v) && Math.abs(clamp(v) - value) > 1e-4) onCommit(clamp(v))
+              // O campo mostra o valor arredondado em 2 casas: só confirma se o texto realmente mudou
+              // (senão só entrar e sair do campo já alteraria o valor exato).
+              if (Number.isFinite(v) && v !== Number(value.toFixed(2)) && Math.abs(clamp(v) - value) > 1e-4) onCommit(clamp(v))
             }}
             onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
           />

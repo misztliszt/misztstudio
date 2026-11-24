@@ -43,7 +43,7 @@ export function DjView({ mixer, project, dispatch, library, onLibrary }: Props) 
   const [analyzing, setAnalyzing] = useState<Set<string>>(new Set())
   const [separating, setSeparating] = useState<Record<string, string>>({})
   const [xf, setXf] = useState(mixer.crossfader)
-  const [masterVol, setMasterVol] = useState(1)
+  const [masterVol, setMasterVol] = useState(mixer.masterValue)
   const [, force] = useState(0)
   const [recResult, setRecResult] = useState<Awaited<ReturnType<DjMixer['stopRecording']>> | null>(null)
   const [recOpts, setRecOpts] = useState({ audio: true, clips: false })
@@ -125,11 +125,34 @@ export function DjView({ mixer, project, dispatch, library, onLibrary }: Props) 
     }
   }
 
+  // Hot cues marcados nos decks ficam gravados na mídia do projeto (voltam ao carregar a faixa de novo e ao reabrir o projeto).
+  useEffect(() => {
+    const sync = (deck: Deck) => () => {
+      const m = deck.track?.media
+      if (!m) return
+      const keep = (project.media[m.id]?.cues ?? []).filter((c) => c.num === null || c.num >= 8)
+      const hot = deck.hotcues.flatMap((c, i) => (c ? [{ name: c.name, time: c.time, num: i, color: c.color }] : []))
+      dispatch({ type: 'updateMedia', id: m.id, patch: { cues: [...hot, ...keep] } })
+    }
+    A.onCuesChange = sync(A)
+    B.onCuesChange = sync(B)
+    return () => {
+      A.onCuesChange = undefined
+      B.onCuesChange = undefined
+    }
+  }, [A, B, dispatch, project.media])
+
   const loadMedia = async (deck: Deck, m: Media) => {
     if (deck.playing && !(await confirm({ title: `Trocar a faixa do deck ${deck.id}?`, message: 'Ele está tocando agora.', confirmLabel: 'Trocar' }))) return
     const cues: HotCue[] = []
     for (const c of m.cues ?? []) if (c.num !== null && c.num < 8) cues[c.num] = { time: c.time, name: c.name, color: c.color }
-    await deck.load({ media: m, bpm: m.beats?.bpm ?? null, offset: m.beats?.offset ?? 0, key: m.key ?? null }, [{ url: m.url, name: 'mix' }], cues)
+    try {
+      await deck.load({ media: m, bpm: m.beats?.bpm ?? null, offset: m.beats?.offset ?? 0, key: m.key ?? null }, [{ url: m.url, name: 'mix' }], cues)
+    } catch (err) {
+      toast.error('Não foi possível carregar a faixa', { detail: `${m.name}: ${errorText(err)}` })
+      return
+    }
+    if (deck.track?.media.id !== m.id) return // outra faixa foi carregada neste deck enquanto esta abria
     // Sem grade ou tom: analisa em segundo plano e atualiza o deck.
     if (!m.beats || !m.key) {
       const patch = await analyze(m)
@@ -198,6 +221,11 @@ export function DjView({ mixer, project, dispatch, library, onLibrary }: Props) 
       const stems = await window.api.separateStems({ filePath: m.path, inPoint: 0, duration: m.duration, model: 'htdemucs', twoStems: false })
       const parts = stems.filter((s) => s.probe.ok).map((s) => ({ url: (s.probe as { ok: true; media: Media }).media.url, name: s.name }))
       if (!parts.length) throw new Error('A separação não gerou faixas')
+      // O usuário pode ter carregado outra faixa no deck durante a separação (leva minutos): não troca os stems da faixa errada.
+      if (deck.track?.media.id !== m.id) {
+        toast.info('A faixa do deck mudou durante a separação', { detail: 'Os stems prontos foram descartados.' })
+        return
+      }
       const t = deck.time
       const wasPlaying = deck.playing
       const cues = [...deck.hotcues]

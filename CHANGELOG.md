@@ -1,5 +1,33 @@
 # Novidades
 
+## 1.0.3
+
+**Edição**
+- Arrastar vários clipes selecionados move o grupo inteiro, mantendo a distância entre eles.
+- Dividir (S), colar, novo texto, marcador e congelar quadro usam a posição exata do cursor, mesmo durante a reprodução (antes podiam errar em até 4 quadros).
+- A rampa de velocidade preserva os keyframes de animação e de volume do clipe.
+- Dividir uma legenda karaokê mantém o destaque das palavras certo na segunda metade.
+- Congelar quadro perto da borda do clipe avisa em vez de criar clipes sobrepostos; colar um clipe cuja mídia foi removida deixou de criar clipes fantasmas.
+- Remover a trilha de voz desliga o ducking que a usava (a música não fica mais abaixada para sempre).
+- Segurar uma tecla não repete mais play, marcador, dividir etc.; os atalhos [ e ] funcionam no teclado ABNT2; os campos numéricos não alteram o valor só por entrar e sair.
+
+**Modo DJ**
+- Limitador na saída: dois decks somados não estouram mais o som nem a gravação do set.
+- Hot cues ficam salvos na mídia do projeto (voltam ao recarregar a faixa e ao reabrir o projeto).
+- Erro ao abrir um arquivo de áudio agora aparece; separar stems não troca mais a faixa errada se você carregou outra no meio; SYNC ignora o empurrão temporário de andamento do outro deck; o volume master mostra o valor certo ao voltar à tela.
+
+**Áudio ao vivo e gravação**
+- Afinação: voltar ao tom certo não desafina mais a nota (antes passava de um semitom por alguns milissegundos), e religar o efeito não toca som antigo.
+- Microfone ao vivo: trocar de dispositivo rápido não deixa microfone ou áudio órfãos; falha no retorno nos fones é avisada sem derrubar a voz; microfone desconectado é avisado; o diálogo deixou de redesenhar 60 vezes por segundo à toa.
+- Gravar áudio: fechar durante a contagem regressiva não inicia gravação nem a timeline sozinha.
+
+**Estabilidade**
+- Fechar o programa encerra yt-dlp, FFmpeg e Python que estivessem rodando (e Cancelar mata também os processos filhos).
+- Só uma instância do programa: dar duplo clique em outro projeto abre-o na janela já aberta.
+- A fila de exportação não para mais ao fechar a janela no meio de uma exportação.
+- Títulos com acento do yt-dlp e linhas de progresso não são mais cortados no meio; a separação de faixas apaga o arquivo temporário grande ao terminar, falhar ou cancelar.
+- Textos: erros em inglês do sistema não aparecem mais cruamente; "views" virou "visualizações"; o aviso de exportação concluída não se repete.
+
 ## 1.0.2
 
 **Segurança**

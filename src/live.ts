@@ -67,6 +67,13 @@ export class LiveVoice {
   /** Luz do gate: true quando a voz está passando. */
   onGate: ((open: boolean) => void) | null = null
   private listeners = new Set<() => void>()
+  /** Cada start()/stop() ganha um número: o mais novo vence e os anteriores se desfazem sozinhos. */
+  private gen = 0
+  private monitorGen = 0
+  /** Chamado quando o microfone some (desconectado) e o efeito é desligado sozinho. */
+  onLost: (() => void) | null = null
+  /** Chamado quando o retorno nos fones falha (a voz principal continua saindo). */
+  onMonitorError: ((err: unknown) => void) | null = null
 
   /** Avisa quando liga ou desliga; devolve a função para cancelar. */
   subscribe(fn: () => void) {
@@ -90,7 +97,9 @@ export class LiveVoice {
   }
 
   async start(s: LiveSettings) {
-    await this.stop()
+    const mine = ++this.gen
+    await this.teardown()
+    if (mine !== this.gen) return
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         deviceId: s.input === 'default' ? undefined : { exact: s.input },
@@ -100,16 +109,27 @@ export class LiveVoice {
         channelCount: 1,
       },
     })
-    const ctx = new AudioContext({ latencyHint: 'interactive', sampleRate: 48000 })
+    // Uma chamada mais nova (trocar de microfone rápido, parar) chegou enquanto o microfone abria: este stream é descartado.
+    if (mine !== this.gen) {
+      stream.getTracks().forEach((t) => t.stop())
+      return
+    }
+    let ctx: AudioContext | null = null
     try {
+      ctx = new AudioContext({ latencyHint: 'interactive', sampleRate: 48000 })
       await ctx.audioWorklet.addModule(coreUrl)
       await ctx.audioWorklet.addModule(workletUrl)
       await ctx.audioWorklet.addModule(gateUrl)
       if (s.output !== 'default') await (ctx as AudioContext & { setSinkId(id: string): Promise<void> }).setSinkId(s.output)
     } catch (err) {
       stream.getTracks().forEach((t) => t.stop())
-      void ctx.close()
+      void ctx?.close()
       throw err
+    }
+    if (mine !== this.gen) {
+      stream.getTracks().forEach((t) => t.stop())
+      void ctx.close()
+      return
     }
     const src = ctx.createMediaStreamSource(stream)
     const hp = new BiquadFilterNode(ctx, { type: 'highpass', frequency: 80, Q: 0.7 })
@@ -148,10 +168,18 @@ export class LiveVoice {
     this.nodes = { src, hp, gate, tune, low, mid, high, comp, send, convolver, out, analyser, inAnalyser, monitorDest }
     this.current = s
     this.apply(s)
-    await this.setMonitor(s.monitor, s.monitorOutput)
-    // Se o microfone for desconectado, desliga.
-    stream.getAudioTracks()[0]?.addEventListener('ended', () => void this.stop())
+    // Se o microfone for desconectado, desliga e avisa (a voz some no jogo; o usuário precisa saber).
+    stream.getAudioTracks()[0]?.addEventListener('ended', () => {
+      if (this.stream !== stream) return
+      void this.stop().then(() => this.onLost?.())
+    })
     this.emit()
+    // O retorno nos fones é opcional: se falhar (fone desconectado), a voz continua saindo e o erro sobe para a interface.
+    try {
+      await this.setMonitor(s.monitor, s.monitorOutput)
+    } catch (err) {
+      this.onMonitorError?.(err)
+    }
   }
 
   /** Ajustes que não exigem reiniciar (afinação, EQ, compressor, reverb, ganho). */
@@ -174,6 +202,7 @@ export class LiveVoice {
 
   /** Retorno nos fones: a voz processada também toca no dispositivo escolhido. */
   async setMonitor(on: boolean, device: string) {
+    const gen = ++this.monitorGen
     if (this.monitorEl) {
       this.monitorEl.pause()
       this.monitorEl.srcObject = null
@@ -182,8 +211,19 @@ export class LiveVoice {
     if (!on || !this.nodes) return
     const el = new Audio()
     el.srcObject = this.nodes.monitorDest.stream
-    if (device !== 'default') await (el as HTMLAudioElement & { setSinkId(id: string): Promise<void> }).setSinkId(device)
-    await el.play()
+    const abandon = () => {
+      el.pause()
+      el.srcObject = null
+    }
+    try {
+      if (device !== 'default') await (el as HTMLAudioElement & { setSinkId(id: string): Promise<void> }).setSinkId(device)
+      await el.play()
+    } catch (err) {
+      abandon()
+      throw err
+    }
+    // Duas trocas seguidas: só a última vale (senão dois elementos tocariam a voz em dobro).
+    if (gen !== this.monitorGen || !this.nodes) return abandon()
     this.monitorEl = el
   }
 
@@ -201,6 +241,12 @@ export class LiveVoice {
   }
 
   async stop() {
+    ++this.gen
+    await this.teardown()
+  }
+
+  private async teardown() {
+    ++this.monitorGen
     if (this.monitorEl) {
       this.monitorEl.pause()
       this.monitorEl.srcObject = null

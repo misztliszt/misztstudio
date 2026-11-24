@@ -52,7 +52,7 @@ export function StemsDialog({ clip, media, onDone, onClose }: Props) {
       await window.api.installStems(variant)
       setStatus(await window.api.stemsStatus())
     } catch (err) {
-      setError(String(err instanceof Error ? err.message : err))
+      setError(String(err instanceof Error ? err.message : err).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''))
     } finally {
       setBusy(null)
     }
@@ -72,7 +72,7 @@ export function StemsDialog({ clip, media, onDone, onClose }: Props) {
       })
       onDone(items, muteOriginal)
     } catch (err) {
-      const msg = String(err instanceof Error ? err.message : err)
+      const msg = String(err instanceof Error ? err.message : err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
       setError(msg.includes('Cancelado') ? null : msg)
     } finally {
       setBusy(null)

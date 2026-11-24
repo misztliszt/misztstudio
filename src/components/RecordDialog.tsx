@@ -39,6 +39,11 @@ export function RecordDialog({ at, onPlay, onDone, onClose }: Props) {
         if (!alive) return s.getTracks().forEach((t) => t.stop())
         stream.current = s
         const list = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audioinput')
+        // Fechou o diálogo (ou trocou o microfone) durante a espera: solta este microfone e não cria o medidor.
+        if (!alive) {
+          s.getTracks().forEach((t) => t.stop())
+          return
+        }
         setDevices(list)
         ctx = new AudioContext()
         const an = ctx.createAnalyser()
@@ -81,12 +86,16 @@ export function RecordDialog({ at, onPlay, onDone, onClose }: Props) {
     return () => clearInterval(id)
   }, [state])
 
+  // Contagem regressiva: limpa ao fechar o diálogo (senão o gravador nasceria numa janela que já fechou).
+  const countTimer = useRef(0)
+  useEffect(() => () => clearInterval(countTimer.current), [])
+
   const start = () => {
     if (!stream.current) return
     setState('count')
     setCount(3)
     let n = 3
-    const id = setInterval(() => {
+    const id = window.setInterval(() => {
       n--
       if (n > 0) setCount(n)
       else {
@@ -100,11 +109,12 @@ export function RecordDialog({ at, onPlay, onDone, onClose }: Props) {
         setState('rec')
       }
     }, 1000)
+    countTimer.current = id
   }
 
   const stop = () => {
     const rec = recorder.current
-    if (!rec) return
+    if (!rec || rec.state === 'inactive') return
     onPlay(false)
     setState('saving')
     rec.onstop = async () => {
@@ -113,7 +123,7 @@ export function RecordDialog({ at, onPlay, onDone, onClose }: Props) {
         const result = await window.api.saveRecording(await blob.arrayBuffer())
         onDone(result, at)
       } catch (err) {
-        setError(String(err))
+        setError(String(err instanceof Error ? err.message : err).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''))
         setState('idle')
       }
     }

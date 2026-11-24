@@ -4,7 +4,8 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const crypto = require('node:crypto')
-const { spawn, execFile } = require('node:child_process')
+const { execFile } = require('node:child_process')
+const { spawn, killTree, lineFeeder } = require('./procs.cjs')
 
 const isWin = process.platform === 'win32'
 const SCRIPT = path.join(__dirname, 'separate.py').replace('app.asar', 'app.asar.unpacked')
@@ -79,19 +80,24 @@ class StemEngine {
       const proc = spawn(bin, args, { windowsHide: true, env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1', ...env } })
       this.proc = proc
       let tail = ''
-      const feed = (chunk, stream) => {
-        const text = chunk.toString()
+      proc.stdout.setEncoding('utf8')
+      proc.stderr.setEncoding('utf8')
+      const lines = lineFeeder(onLine)
+      proc.stdout.on('data', (text) => {
         tail = (tail + text).slice(-4000)
-        for (const line of text.split(/[\r\n]+/)) if (line.trim()) onLine(line, stream)
-      }
-      proc.stdout.on('data', (c) => feed(c, 'out'))
-      proc.stderr.on('data', (c) => feed(c, 'err'))
+        lines.push('out', text)
+      })
+      proc.stderr.on('data', (text) => {
+        tail = (tail + text).slice(-4000)
+        lines.push('err', text)
+      })
       proc.on('error', (err) => {
-        this.proc = null
+        if (this.proc === proc) this.proc = null
         reject(err)
       })
       proc.on('close', (code) => {
-        this.proc = null
+        if (this.proc === proc) this.proc = null
+        lines.flush()
         if (code === 0) resolve()
         else reject(new Error(this.canceled ? 'Cancelado' : tail.slice(-1500) || `Processo saiu com código ${code}`))
       })
@@ -145,6 +151,15 @@ class StemEngine {
 
     fs.mkdirSync(outDir, { recursive: true })
     const input = path.join(outDir, 'input.wav')
+    // O WAV de entrada é grande (~1,2 GB por hora de áudio): some ao terminar, falhar ou cancelar.
+    try {
+      return await this.separateFile(input, outDir, doneFile, { filePath, inPoint, duration, model, twoStems }, onProgress)
+    } finally {
+      fs.rmSync(input, { force: true })
+    }
+  }
+
+  async separateFile(input, outDir, doneFile, { filePath, inPoint, duration, model, twoStems }, onProgress) {
     onProgress({ stage: 'decoding', text: 'Preparando o áudio…', progress: 0 })
     await this.run(this.ffmpeg, ['-y', '-hide_banner', '-loglevel', 'error', '-ss', String(inPoint), '-t', String(duration), '-i', filePath, '-vn', '-ac', '2', '-ar', '44100', '-c:a', 'pcm_f32le', input], () => {})
 
@@ -181,7 +196,7 @@ class StemEngine {
 
   cancel() {
     this.canceled = true
-    if (this.proc) this.proc.kill()
+    killTree(this.proc)
   }
 }
 

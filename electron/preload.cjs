@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('api', {
   probeFiles: (files) => ipcRenderer.invoke('media:probe', files.map((f) => webUtils.getPathForFile(f))),
   saveProject: (json, filePath) => ipcRenderer.invoke('project:save', { json, filePath }),
   openProject: () => ipcRenderer.invoke('project:open'),
+  onOpenProject: (cb) => subscribe('project:external', cb),
   setDirty: (dirty) => ipcRenderer.invoke('app:setDirty', dirty),
   mediaExists: (paths) => ipcRenderer.invoke('media:exists', paths),
   initialProject: () => ipcRenderer.invoke('project:initial'),
