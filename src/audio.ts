@@ -101,12 +101,20 @@ export class AudioGraph {
     if (this.ctx!.state !== 'running') void this.ctx!.resume()
   }
 
+  // Respostas ao impulso do reverb já geradas (por duração arredondada a 0,1 s): arrastar o controle de
+  // duração não gera um impulso de até 6 s a cada valor intermediário.
+  private impulses = new Map<number, AudioBuffer>()
   private impulse(decay: number) {
     const ctx = this.ctx!
-    const [l, r] = globalThis.makeReverbIR(ctx.sampleRate, decay)
+    const key = Math.round(decay * 10) / 10
+    const cached = this.impulses.get(key)
+    if (cached) return cached
+    const [l, r] = globalThis.makeReverbIR(ctx.sampleRate, key)
     const buf = ctx.createBuffer(2, l.length, ctx.sampleRate)
     buf.copyToChannel(l as Float32Array<ArrayBuffer>, 0)
     buf.copyToChannel(r as Float32Array<ArrayBuffer>, 1)
+    if (this.impulses.size >= 24) this.impulses.delete(this.impulses.keys().next().value!)
+    this.impulses.set(key, buf)
     return buf
   }
 
@@ -171,9 +179,10 @@ export class AudioGraph {
       chain.comp.ratio.setTargetAtTime(fx.comp.enabled ? fx.comp.ratio : 1, now, 0.02)
       chain.pan.pan.setTargetAtTime(fx.pan, now, 0.02)
       chain.send.gain.setTargetAtTime(fx.reverb.mix, now, 0.02)
-      if (fx.reverb.mix > 0 && chain.decay !== fx.reverb.decay) {
-        chain.convolver.buffer = this.impulse(fx.reverb.decay)
-        chain.decay = fx.reverb.decay
+      const decayKey = Math.round(fx.reverb.decay * 10) / 10
+      if (fx.reverb.mix > 0 && chain.decay !== decayKey) {
+        chain.convolver.buffer = this.impulse(decayKey)
+        chain.decay = decayKey
       }
       chain.out.gain.setTargetAtTime(t.muted ? 0 : t.volume, now, 0.02)
       chain.tune?.port.postMessage({ ...fx.autotune, transpose: fx.transpose })

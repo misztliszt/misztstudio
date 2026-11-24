@@ -7,7 +7,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 const crypto = require('node:crypto')
 const { isLocalPath } = require('./security.cjs')
-const { AutoTuneCore } = require('../src/dsp/autotune-core.js')
+const { runDsp } = require('./dsp-tasks.cjs')
 const { makeReverbIR } = require('../src/dsp/reverb-ir.js')
 
 const SR = 48000
@@ -177,38 +177,6 @@ function writeWavFloat(file, channels) {
   let o = 44
   for (let f = 0; f < frames; f++) for (let c = 0; c < nch; c++, o += 4) buf.writeFloatLE(channels[c][f], o)
   fs.writeFileSync(file, buf)
-}
-
-/** Aplica afinação/transposição a um arquivo PCM f32le estéreo intercalado. */
-function processPitch(rawIn, rawOut, fx) {
-  const data = fs.readFileSync(rawIn)
-  const pcm = new Float32Array(data.buffer, data.byteOffset, Math.floor(data.byteLength / 4))
-  const frames = pcm.length >> 1
-  const core = new AutoTuneCore(SR)
-  core.setParams({ ...fx.autotune, transpose: fx.transpose })
-  const BLOCK = 128
-  const inL = new Float32Array(BLOCK)
-  const inR = new Float32Array(BLOCK)
-  const outL = new Float32Array(BLOCK)
-  const outR = new Float32Array(BLOCK)
-  const out = new Float32Array(pcm.length)
-  for (let f = 0; f < frames; f += BLOCK) {
-    const len = Math.min(BLOCK, frames - f)
-    for (let i = 0; i < len; i++) {
-      inL[i] = pcm[(f + i) * 2]
-      inR[i] = pcm[(f + i) * 2 + 1]
-    }
-    if (len < BLOCK) {
-      inL.fill(0, len)
-      inR.fill(0, len)
-    }
-    core.process(inL, inR, outL, outR, BLOCK)
-    for (let i = 0; i < len; i++) {
-      out[(f + i) * 2] = outL[i]
-      out[(f + i) * 2 + 1] = outR[i]
-    }
-  }
-  fs.writeFileSync(rawOut, Buffer.from(out.buffer))
 }
 
 /** Ganhos do StereoPannerNode (especificação Web Audio) como filtro pan do FFmpeg. */
@@ -469,7 +437,7 @@ async function prepareExport(payload, outPath, { workDir, runFfmpeg }) {
       // Renderiza a trilha seca, aplica a afinação em JS e usa o resultado como entrada.
       const rawIn = await renderStem(track)
       const rawOut = path.join(workDir, `${tid}_tuned.raw`)
-      processPitch(rawIn, rawOut, fx)
+      await runDsp('processPitch', rawIn, rawOut, fx) // em outra thread: a janela não congela
       const i = inputs.add('-f', 'f32le', '-ar', String(SR), '-ac', '2', '-i', rawOut)
       filters.push(`[${i}:a]anull[${tid}dry]`)
     } else {
@@ -496,7 +464,7 @@ async function prepareExport(payload, outPath, { workDir, runFfmpeg }) {
     const source = duck && duck.enabled && duck.source ? trackById.get(duck.source) : null
     if (source && source.id !== track.id && audioClipsOf(project, source.id).length) {
       const gainFile = path.join(workDir, `${tid}_duck.raw`)
-      writeDuckCurve(await renderStem(source), gainFile, duck.depth)
+      await runDsp('writeDuckCurve', await renderStem(source), gainFile, duck.depth)
       const gi = inputs.add('-f', 'f32le', '-ar', String(SR), '-ac', '2', '-i', gainFile)
       filters.push(`[${label}][${gi}:a]amultiply[${tid}dk]`)
       label = `${tid}dk`
@@ -533,45 +501,6 @@ async function prepareExport(payload, outPath, { workDir, runFfmpeg }) {
   args.push('-t', n(total), outPath)
   return { args, total }
 }
-
-/**
- * Curva de ganho do ducking a partir da trilha de voz (PCM f32le estéreo):
- * RMS em blocos de 10 ms; acima de −40 dBFS abaixa `depth` dB, com ataque de 50 ms e
- * liberação de 400 ms. Igual ao seguidor de envelope da prévia (src/audio.ts).
- */
-function writeDuckCurve(sourceRaw, outFile, depth) {
-  const data = fs.readFileSync(sourceRaw)
-  const pcm = new Float32Array(data.buffer, data.byteOffset, Math.floor(data.byteLength / 4))
-  const frames = pcm.length >> 1
-  const BLOCK = SR / 100
-  const low = Math.pow(10, -Math.abs(depth) / 20)
-  const out = new Float32Array(frames * 2)
-  let cur = 1
-  for (let b = 0; b * BLOCK < frames; b++) {
-    const s = b * BLOCK
-    const e = Math.min(frames, s + BLOCK)
-    let sum = 0
-    for (let f = s; f < e; f++) {
-      const m = (pcm[f * 2] + pcm[f * 2 + 1]) * 0.5
-      sum += m * m
-    }
-    const rms = Math.sqrt(sum / Math.max(1, e - s))
-    const target = rms > DUCK_THRESHOLD ? low : 1
-    const tc = target < cur ? DUCK_ATTACK : DUCK_RELEASE
-    const next = cur + (target - cur) * (1 - Math.exp(-0.01 / tc))
-    for (let f = s; f < e; f++) {
-      const g = cur + ((next - cur) * (f - s)) / (e - s)
-      out[f * 2] = g
-      out[f * 2 + 1] = g
-    }
-    cur = next
-  }
-  fs.writeFileSync(outFile, Buffer.from(out.buffer))
-}
-
-const DUCK_THRESHOLD = 0.01
-const DUCK_ATTACK = 0.05
-const DUCK_RELEASE = 0.4
 
 /** Mixagem simples (sem efeitos) da timeline inteira, para transcrição. */
 function buildMixdownArgs(project, sampleRate) {

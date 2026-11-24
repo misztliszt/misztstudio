@@ -51,9 +51,14 @@ export class PlaybackEngine {
     for (const [id, entry] of this.elements) {
       if (!alive.has(id)) this.dropElement(id, entry.el)
     }
-    this.audio.updateTracks(project.tracks)
+    // Arrastar clipes muda o projeto a cada tick, mas as trilhas só mudam quando o usuário mexe nelas.
+    if (project.tracks !== this.lastTracks) {
+      this.lastTracks = project.tracks
+      this.audio.updateTracks(project.tracks)
+    }
     this.sync()
   }
+  private lastTracks: Project['tracks'] | null = null
 
   update(time: number, playing: boolean) {
     if (playing && !this.playing) this.audio.resume()

@@ -883,7 +883,11 @@ export function App() {
 
   // Mantém seleções coerentes com desfazer/refazer.
   useEffect(() => {
-    setSelection((sel) => sel.filter((id) => project.clips.some((c) => c.id === id)))
+    // Devolve o mesmo array quando nada mudou: sem isto cada tick de arrasto causava um render extra do app inteiro.
+    setSelection((sel) => {
+      const kept = sel.filter((id) => project.clips.some((c) => c.id === id))
+      return kept.length === sel.length ? sel : kept
+    })
     setSelectedTrack((t) => (t && project.tracks.some((x) => x.id === t) ? t : null))
   }, [project.clips, project.tracks])
 
@@ -1076,7 +1080,6 @@ export function App() {
             {bottom === 'timeline' ? (
               <Timeline
                 project={project}
-                time={time}
                 zoom={zoom}
                 selection={selection}
                 selectedTrack={selectedTrack}
