@@ -1,5 +1,16 @@
 # Novidades
 
+## 1.0.2
+
+**Segurança**
+- O programa só lê pela interface os arquivos que conhece (mídias importadas, citadas em projetos abertos ou geradas por ele); antes qualquer arquivo do disco podia ser lido.
+- A interface só aceita chamadas vindas dela mesma, e a janela ficou com sandbox e sem navegação para fora do app.
+- Salvar projeto só grava em arquivos .edproj que você escolheu ou abriu; as preferências recusam valores inválidos; a gravação de tela valida as fontes.
+- Importar por link aceita só endereços http(s), e o yt-dlp baixado agora é conferido pelo hash oficial.
+- Exportação: caminhos de mídia precisam ser arquivos locais, a LUT é copiada com nome seguro (nomes com apóstrofo não quebram mais) e ids/medidas do projeto são validados.
+- Plugins VST3 só carregam se tiverem sido encontrados pela busca de plugins; downloads da biblioteca livre exigem https de servidor público e têm limite de tamanho.
+- Política de segurança do conteúdo mais restrita; o modo de desenvolvimento não vale mais no app instalado.
+
 ## 1.0.1
 
 **Proteção contra perda de dados**

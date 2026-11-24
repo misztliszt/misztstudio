@@ -116,3 +116,31 @@ describe('fila: arquivo de destino existente', () => {
     expect(fs.readdirSync(dir).filter((f) => f.includes('.parcial'))).toHaveLength(0)
   }, 60000)
 })
+
+describe('caminhos e LUT no filtro', () => {
+  it('mídia com endereço de rede ou protocolo do FFmpeg é recusada', async () => {
+    for (const bad of ['http://exemplo.com/a.mp4', 'concat:a|b', 'subfile,,start,0,end,10,,:C:/x.mp4']) {
+      const p = base()
+      const proj = { ...p, media: { a: { ...p.media.a, path: bad } } }
+      await expect(prepareExport({ project: proj, textImages: {}, colorMatrices: {}, options }, path.join(dir, 'r.mp4'), { workDir: path.join(dir, 'work-r'), runFfmpeg: async () => {} })).rejects.toThrow(/Caminho de mídia inválido/)
+    }
+  })
+
+  it('LUT com apóstrofo no nome exporta normalmente (cópia com nome seguro)', async () => {
+    const lut = path.join(dir, "Gabriel's LUT.cube")
+    fs.writeFileSync(lut, 'LUT_3D_SIZE 2\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n')
+    const p = base()
+    const proj = { ...p, clips: [{ ...p.clips[0], color: { ...p.clips[0].color, lut: lut } }] }
+    const out = path.join(dir, 'lut.mp4')
+    const { args } = await prepareExport({ project: proj, textImages: {}, colorMatrices: {}, options }, out, { workDir: path.join(dir, 'work-lut'), runFfmpeg: async (a: string[]) => ffmpeg(a) })
+    expect(args.join(' ')).not.toContain("Gabriel's")
+    ffmpeg(args)
+    expect(fs.statSync(out).size).toBeGreaterThan(1000)
+  }, 60000)
+
+  it('LUT que não é .cube é recusada', async () => {
+    const p = base()
+    const proj = { ...p, clips: [{ ...p.clips[0], color: { ...p.clips[0].color, lut: path.join(dir, 'a.mp4') } }] }
+    await expect(prepareExport({ project: proj, textImages: {}, colorMatrices: {}, options }, path.join(dir, 'l2.mp4'), { workDir: path.join(dir, 'work-l2'), runFfmpeg: async () => {} })).rejects.toThrow(/LUT/)
+  })
+})

@@ -11,6 +11,21 @@ const EXT = { mp32: 'mp3', mp3: 'mp3', mpeg: 'mp3', ogg: 'ogg', oga: 'ogg', wav:
 
 const LICENSE_NAMES = { cc0: 'CC0 (domínio público)', pdm: 'Domínio público', by: 'CC BY', 'by-sa': 'CC BY-SA', 'by-nd': 'CC BY-ND', 'by-nc': 'CC BY-NC', 'by-nc-sa': 'CC BY-NC-SA', 'by-nc-nd': 'CC BY-NC-ND', sampling: 'Sampling+', 'nc-sampling': 'NC Sampling+' }
 
+const MAX_BYTES = 500 * 1024 * 1024
+
+/** Só https para um servidor público (nada de localhost, rede interna ou endereço IP direto). */
+function assertPublicHttps(url) {
+  let u
+  try {
+    u = new URL(String(url))
+  } catch {
+    throw new Error('Endereço inválido')
+  }
+  const host = u.hostname.toLowerCase()
+  const ipLike = /^[\d.]+$/.test(host) || host.includes(':') || host.startsWith('[')
+  if (u.protocol !== 'https:' || ipLike || host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal') || !host.includes('.')) throw new Error('Endereço de download não permitido')
+}
+
 class Library {
   constructor(userAgent) {
     this.userAgent = userAgent
@@ -39,7 +54,7 @@ class Library {
           title: r.title || 'Sem título',
           creator: r.creator || null,
           license: r.license,
-          licenseName: `${LICENSE_NAMES[r.license] || r.license.toUpperCase()}${r.license_version && !['cc0', 'pdm'].includes(r.license) ? ` ${r.license_version}` : ''}`,
+          licenseName: `${LICENSE_NAMES[r.license] || String(r.license || '').toUpperCase()}${r.license_version && !['cc0', 'pdm'].includes(r.license) ? ` ${r.license_version}` : ''}`,
           licenseUrl: r.license_url || null,
           attribution: r.attribution || null,
           landing: r.foreign_landing_url || null,
@@ -59,19 +74,26 @@ class Library {
 
   /** Baixa o arquivo para a pasta escolhida e devolve o caminho. */
   async download(item, dir, onProgress) {
+    if (!item || typeof item !== 'object') throw new Error('Item inválido')
+    const id = String(item.id || '')
+    if (!/^[\w-]{6,80}$/.test(id)) throw new Error('Item inválido')
+    const ext = Object.values(EXT).includes(item.ext) ? item.ext : 'mp3'
+    assertPublicHttps(item.url)
     fs.mkdirSync(dir, { recursive: true })
-    const safe = `${item.title}${item.creator ? ` - ${item.creator}` : ''}`.replace(/[\\/:*?"<>|]/g, '_').slice(0, 90).trim()
-    const file = path.join(dir, `${safe} [${item.id.slice(0, 8)}].${item.ext}`)
+    const safe = `${item.title || 'Sem título'}${item.creator ? ` - ${item.creator}` : ''}`.replace(/[\\/:*?"<>|]/g, '_').slice(0, 90).trim()
+    const file = path.join(dir, `${safe} [${id.slice(0, 8)}].${ext}`)
     if (fs.existsSync(file)) return file
     this.abort = new AbortController()
     const res = await fetch(item.url, { signal: this.abort.signal, redirect: 'follow', headers: { 'User-Agent': this.userAgent } })
     if (!res.ok || !res.body) throw new Error(`Não foi possível baixar (HTTP ${res.status})`)
     const total = Number(res.headers.get('content-length')) || 0
+    if (total > MAX_BYTES) throw new Error('O arquivo é grande demais para baixar')
     let got = 0
     const tmp = `${file}.part`
     const counter = new (require('node:stream').Transform)({
       transform(chunk, _enc, cb) {
         got += chunk.length
+        if (got > MAX_BYTES) return cb(new Error('O arquivo é grande demais para baixar'))
         if (total) onProgress(got / total)
         cb(null, chunk)
       },
@@ -93,4 +115,4 @@ class Library {
   }
 }
 
-module.exports = { Library }
+module.exports = { Library, assertPublicHttps }

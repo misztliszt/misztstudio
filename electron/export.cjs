@@ -5,6 +5,8 @@
 
 const fs = require('node:fs')
 const path = require('node:path')
+const crypto = require('node:crypto')
+const { isLocalPath } = require('./security.cjs')
 const { AutoTuneCore } = require('../src/dsp/autotune-core.js')
 const { makeReverbIR } = require('../src/dsp/reverb-ir.js')
 
@@ -128,11 +130,17 @@ function audioClipsOf(project, trackId) {
   })
 }
 
+/** Arquivo de mídia do projeto: precisa ser um caminho local (nunca uma URL nem um protocolo do FFmpeg). */
+function localMediaPath(media) {
+  if (!isLocalPath(media.path)) throw new Error(`Caminho de mídia inválido: ${String(media.path).slice(0, 80)}`)
+  return media.path
+}
+
 function addClipInput(inputs, clip, media) {
   // Trecho da mídia de origem: a duração na timeline vezes a velocidade.
   // VP9 com transparência só mantém o alfa com o decodificador libvpx.
   const decoder = media.alpha ? ['-c:v', 'libvpx-vp9'] : []
-  return inputs.add('-ss', n(clip.in), '-t', n(clip.duration * (clip.speed || 1)), ...decoder, '-i', media.path)
+  return inputs.add('-ss', n(clip.in), '-t', n(clip.duration * (clip.speed || 1)), ...decoder, '-i', localMediaPath(media))
 }
 
 /** Mixa as trilhas indicadas (sem efeitos de trilha) num rótulo de saída. */
@@ -224,6 +232,14 @@ function trackFxChain(fx) {
   return parts
 }
 
+/** Copia a LUT para a pasta de trabalho com um nome só de letras e números. */
+function safeLut(lutPath, workDir) {
+  if (!isLocalPath(lutPath) || path.extname(lutPath).toLowerCase() !== '.cube') throw new Error('Arquivo de LUT inválido')
+  const dest = path.join(workDir, `lut_${crypto.createHash('sha1').update(lutPath).digest('hex').slice(0, 12)}.cube`)
+  if (!fs.existsSync(dest)) fs.copyFileSync(lutPath, dest)
+  return dest
+}
+
 const escapeFilterPath = (p) => p.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\'")
 
 /**
@@ -292,7 +308,7 @@ async function prepareExport(payload, outPath, { workDir, runFfmpeg }) {
     } else {
       const media = project.media[clip.mediaId]
       const speed = clip.speed || 1
-      if (media.kind === 'image') i = inputs.add('-loop', '1', '-framerate', String(fps), '-t', n(clip.duration), '-i', media.path)
+      if (media.kind === 'image') i = inputs.add('-loop', '1', '-framerate', String(fps), '-t', n(clip.duration), '-i', localMediaPath(media))
       else i = addClipInput(inputs, clip, media)
 
       // Tempo: velocidade e posição na timeline primeiro, para que `t` dos filtros seguintes seja o da timeline.
@@ -350,7 +366,7 @@ async function prepareExport(payload, outPath, { workDir, runFfmpeg }) {
       chain.push('format=rgba')
 
       const c = clip.color
-      if (c.lut) chain.push(`lut3d=file='${escapeFilterPath(c.lut)}'`)
+      if (c.lut) chain.push(`lut3d=file='${escapeFilterPath(safeLut(c.lut, workDir))}'`)
       if (c.brightness !== 0 || c.contrast !== 1) {
         const e = `clip((val*${n(1 + c.brightness)}-127.5)*${n(c.contrast)}+127.5,0,255)`
         chain.push(`lutrgb=r='${e}':g='${e}':b='${e}'`)
